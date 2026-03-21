@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Builds a chronological event timeline for a single hospital admission (hadm_id)
 by pulling from all four MIMIC-IV modules: ED, HOSP, ICU, NOTE.
@@ -715,10 +714,8 @@ def _parse_history(text: str) -> str:
     if not success:
         return ""
 
-    # remove header
     text = re.sub(re.compile("history of present(?:ing)? illness:", re.IGNORECASE), "", text)
 
-    # remove terminal string
     for pe_str in pe_strings:
         text = re.sub(re.compile(pe_str, re.IGNORECASE), "", text)
 
@@ -754,15 +751,12 @@ def _parse_physical_exam(text: str) -> str:
     if not success:
         return ""
 
-    # remove header
     for pe_str in pe_strings:
         text = re.sub(re.compile(pe_str, re.IGNORECASE), "", text)
 
-    # remove terminal string
     text = re.sub(re.compile("pertinent results:", re.IGNORECASE), "", text)
     text = re.sub(re.compile("brief hospital course:", re.IGNORECASE), "", text)
 
-    # remove everything after discharge pe
     text = re.sub(re.compile("at discharge.*", re.IGNORECASE), "", text)
     text = re.sub(re.compile("upon discharge.*", re.IGNORECASE), "", text)
     text = re.sub(re.compile("on discharge.*", re.IGNORECASE), "", text)

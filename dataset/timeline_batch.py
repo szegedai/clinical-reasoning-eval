@@ -53,7 +53,6 @@ def get_timeline_batch(
     notes_job = client.query(notes_sql, job_config=job_config)
     notes_raw = notes_job.to_dataframe()
 
-    # Pre-compute t0 and subject_id per hadm_id to avoid repeated full-DF scans
     _valid = df[df["time_precision"] != "date_only"]
     t0_map = _valid.groupby("hadm_id")["event_time"].min()
     subj_map = df.groupby("hadm_id")["subject_id"].first()
