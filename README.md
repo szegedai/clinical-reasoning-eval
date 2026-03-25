@@ -16,8 +16,12 @@ Requires Google Cloud credentials for BigQuery access (dataset extraction only).
 ## Repo structure
 
 ```
+configs/                  # Configuration
+  pathologies.yaml        #   ICD codes, HPI patterns, dx_aliases for all pathologies
+  replay_config*.yaml     #   replay runner configs (model, chunker params, etc.)
+
 dataset/                  # BigQuery → timeline extraction
-  create_cohort.py        #   query hadm_ids by ICD code + filters
+  create_cohort.py        #   query hadm_ids by ICD code or pathology config + filters
   timeline.py             #   single-patient timeline from BQ
   timeline_batch.py       #   batch extraction (cheaper, same BQ scan cost)
 
@@ -35,8 +39,11 @@ llm/                      # LLM calling
   runner.py               #   PatientRunner: replay loop, multi-turn conversation
   parser.py               #   JSON extraction + field validation
 
+analysis/                 # Result analysis and visualization
+  analyze_results.py      #   accuracy/confidence plots from replay JSONs
+  collect_results.py      #   collect per-step results into Excel
+
 run_replay.py             # CLI: run replay on a batch of patients
-collect_results.py        # Collect per-step results into Excel
 utils/check_bq_usage.py   # BigQuery cost monitoring
 ```
 
@@ -45,8 +52,14 @@ utils/check_bq_usage.py   # BigQuery cost monitoring
 ### 1. Extract timelines (requires BQ access)
 
 ```bash
-# Create a cohort of hadm_ids
-python dataset/create_cohort.py --icd-prefix K35 K37 --limit 100 --output cohort.txt
+# Create a cohort using pathology config (loads ICD codes from YAML)
+python dataset/create_cohort.py --pathology appendicitis --limit 100 --output cohort.txt
+
+# Or with explicit ICD prefixes
+python dataset/create_cohort.py --icd-range K35,K37 --limit 100 --output cohort.txt
+
+# Exclude patients whose HPI mentions the diagnosis
+python dataset/create_cohort.py --pathology appendicitis --exclude-hpi-dx --output cohort_clean.txt
 
 # Extract timelines in batch
 python dataset/timeline_batch.py --file cohort.txt --output-dir timelines/
@@ -54,42 +67,49 @@ python dataset/timeline_batch.py --file cohort.txt --output-dir timelines/
 
 ### 2. Run replay against an LLM
 
-Create a config file (see `replay_config.yaml` for defaults):
+See `configs/replay_config_gemini.yaml` for a full example. Key options:
 
 ```yaml
 model: gemini-2.0-flash
 base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-api_key_env: GEMINI_API_KEY    # reads API key from this env var
+api_key_env: GEMINI_API_KEY
 temperature: 0.0
-
-prompts:
-  system: system_prompt.md
-  step: step_prompt.md
+max_steps: 20
 
 chunker:
+  max_events: 25
+  max_event_types: 3
+  max_hours: 4.0
   stop_at:
     event_type: SERVICE
     description: "Service: SURG"
+  exclude_sources: [ICU]
+  exclude_event_types: [DISCHARGE_DX, DISCHARGE_FREETEXTDX]
+  max_chunks: 50
 ```
 
 Run:
 
 ```bash
 export GEMINI_API_KEY=...
-python run_replay.py -c replay_config.yaml --timeline-dir timelines/ -o results/run1/
+python run_replay.py -c configs/replay_config_gemini.yaml --timeline-dir timelines/ -o results/run1/
+
+# Resume an interrupted run
+python run_replay.py -c configs/replay_config_gemini.yaml --timeline-dir timelines/ -o results/run1/ --skip-existing
 ```
 
-Resume an interrupted run:
+### 3. Analyze results
 
 ```bash
-python run_replay.py -c replay_config.yaml --timeline-dir timelines/ -o results/run1/ --skip-existing
-```
+# Accuracy plots + Excel for one pathology
+python analysis/analyze_results.py results/run1/ --pathology appendicitis -o results/
 
-### 3. Collect results
+# Multiple pathologies (multi-panel plots)
+python analysis/analyze_results.py results/appendicitis_gemini results/cholecystitis_gemini \
+  --pathology appendicitis cholecystitis -o results/
 
-```bash
-python collect_results.py results/run1/
-# → results/run1/results.xlsx
+# Collect per-step results into Excel
+python analysis/collect_results.py results/run1/
 ```
 
 ## How the replay works
