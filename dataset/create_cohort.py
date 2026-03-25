@@ -2,18 +2,44 @@
 Queries BigQuery for hadm_ids matching a primary ICD code range (seq_num=1)
 
 Usage:
+  # Using pathology config (loads ICD-9+10 codes and HPI pattern from YAML):
+  python create_cohort.py --pathology appendicitis --output appendicitis_ids.txt
+  python create_cohort.py --pathology appendicitis --exclude-hpi-dx --output appendicitis_clean.txt
+
+  # Using explicit ICD prefixes (backwards compatible):
   python create_cohort.py --icd-range K35,K37 --output appendicitis_ids.txt
-  python create_cohort.py --icd-range K35,K37 --no-require-note --no-require-ed --output cohort.txt
-  python create_cohort.py --icd-range I21,I22 --limit 500 --output mi_ids.txt
+  python create_cohort.py --icd-range K35,K37 --exclude-hpi-dx --hpi-pattern "(?i)appendicitis" --output out.txt
+
+  # Other options:
+  python create_cohort.py --pathology appendicitis --no-require-note --no-require-ed --output cohort.txt
+  python create_cohort.py --pathology appendicitis --dry-run
 """
 
 import argparse
 import sys
+from pathlib import Path
+
+import yaml
 from google.cloud import bigquery
 
 HOSP_DS = "physionet-data.mimiciv_3_1_hosp"
 ED_DS = "physionet-data.mimiciv_ed"
 NOTE_DS = "physionet-data.mimiciv_note"
+
+CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
+
+
+def load_pathology_config(name: str) -> dict:
+    """Load a single pathology definition from pathologies.yaml."""
+    yaml_path = CONFIGS_DIR / "pathologies.yaml"
+    if not yaml_path.exists():
+        sys.exit(f"Config file not found: {yaml_path}")
+    with open(yaml_path) as f:
+        all_pathologies = yaml.safe_load(f)
+    if name not in all_pathologies:
+        available = ", ".join(sorted(all_pathologies.keys()))
+        sys.exit(f"Unknown pathology '{name}'. Available: {available}")
+    return all_pathologies[name]
 
 
 def build_cohort_query(
@@ -21,15 +47,16 @@ def build_cohort_query(
     require_note: bool,
     require_ed: bool,
     limit: int = None,
+    exclude_hpi_pattern: str = None,
 ) -> str:
     icd_conditions = " OR ".join(
         f"dx.icd_code LIKE '{prefix}%'" for prefix in icd_prefixes
     )
 
     note_join = ""
-    if require_note:
+    if require_note or exclude_hpi_pattern:
         note_join = f"""
-  JOIN `{NOTE_DS}.discharge` dn ON dn.hadm_id = dx.hadm_id"""
+  JOIN `{NOTE_DS}.discharge` n ON n.hadm_id = dx.hadm_id"""
 
     ed_join = ""
     if require_ed:
@@ -38,7 +65,29 @@ def build_cohort_query(
 
     limit_clause = f"\nLIMIT {limit}" if limit else ""
 
-    return f"""
+    if exclude_hpi_pattern:
+        # CTE-based query: extract HPI, then filter out disease mentions
+        return f"""
+WITH base AS (
+  SELECT DISTINCT
+    dx.hadm_id,
+    COALESCE(
+      REGEXP_EXTRACT(
+        REPLACE(n.text, '\\n', ' '),
+        r'(?i)(?:history|___) of present(?:ing)? illness:(.+?)(?:physical exam(?:ination)?:|physical ___:|(?:pertinent|___) results:|hospital course:)'
+      ),
+      ''
+    ) AS hpi
+  FROM `{HOSP_DS}.diagnoses_icd` dx{note_join}{ed_join}
+  WHERE dx.seq_num = 1
+    AND ({icd_conditions})
+)
+SELECT hadm_id FROM base
+WHERE NOT REGEXP_CONTAINS(hpi, r'{exclude_hpi_pattern}'){limit_clause}
+"""
+    else:
+        # Simple query without HPI filtering
+        return f"""
 SELECT DISTINCT dx.hadm_id
 FROM `{HOSP_DS}.diagnoses_icd` dx{note_join}{ed_join}
 WHERE dx.seq_num = 1
@@ -52,10 +101,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument(
-        "--icd-range", type=str, required=True,
+
+    # Source of ICD codes: either --pathology or --icd-range
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument(
+        "--pathology", type=str,
+        help="Pathology name from configs/pathologies.yaml (loads ICD-9+10 codes)",
+    )
+    source_group.add_argument(
+        "--icd-range", type=str,
         help="Comma-separated ICD code prefixes (e.g. K35,K37 for appendicitis)",
     )
+
     parser.add_argument(
         "--output", type=str, required=True,
         help="Output file path (one hadm_id per line)",
@@ -76,22 +133,63 @@ def main():
         "--limit", type=int, default=None,
         help="Maximum number of hadm_ids to return",
     )
+    parser.add_argument(
+        "--exclude-hpi-dx", action="store_true",
+        help="Exclude patients whose HPI mentions the disease name",
+    )
+    parser.add_argument(
+        "--hpi-pattern", type=str, default=None,
+        help="BQ re2 regex for disease name in HPI (required with --exclude-hpi-dx + --icd-range)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show the SQL and estimated bytes without executing",
+    )
     args = parser.parse_args()
 
-    prefixes = [p.strip() for p in args.icd_range.split(",")]
+    # Resolve ICD prefixes and HPI pattern
+    if args.pathology:
+        cfg = load_pathology_config(args.pathology)
+        prefixes = cfg.get("icd_10", []) + cfg.get("icd_9", [])
+        hpi_pattern = cfg.get("hpi_exclude")
+    else:
+        prefixes = [p.strip() for p in args.icd_range.split(",")]
+        hpi_pattern = args.hpi_pattern
+
+    # Validate --exclude-hpi-dx usage
+    exclude_pattern = None
+    if args.exclude_hpi_dx:
+        if not hpi_pattern:
+            sys.exit("--exclude-hpi-dx requires either --pathology (auto) or --hpi-pattern (explicit)")
+        exclude_pattern = hpi_pattern
+        if not args.require_note:
+            print("Note: --exclude-hpi-dx forces discharge note JOIN (overrides --no-require-note)")
+
     sql = build_cohort_query(
         icd_prefixes=prefixes,
         require_note=args.require_note,
         require_ed=args.require_ed,
         limit=args.limit,
+        exclude_hpi_pattern=exclude_pattern,
     )
 
     print(f"ICD prefixes: {prefixes}")
     print(f"Require note: {args.require_note}")
     print(f"Require ED:   {args.require_ed}")
-    print(f"\nSQL:\n{sql}")
+    if exclude_pattern:
+        print(f"HPI exclude:  {exclude_pattern}")
 
     client = bigquery.Client(project=args.project)
+
+    if args.dry_run:
+        job_config = bigquery.QueryJobConfig(dry_run=True, use_query_cache=False)
+        job = client.query(sql, job_config=job_config)
+        gb = job.total_bytes_processed / 1e9
+        print(f"\nEstimated scan: {gb:.2f} GB (${gb / 1000 * 5:.3f} at $5/TB)")
+        print(f"\nSQL:\n{sql}")
+        return
+
+    print(f"\nSQL:\n{sql}")
     print("Querying BigQuery...")
     df = client.query(sql).to_dataframe()
 

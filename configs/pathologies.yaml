@@ -1,0 +1,120 @@
+# Pathology definitions for cohort selection and analysis.
+# Single source of truth — used by create_cohort.py, hpi_leak_analysis.py, chunk_analysis.py.
+#
+# Fields:
+#   icd_10:       ICD-10-CM prefixes (LIKE 'X%' matching)
+#   icd_9:        ICD-9-CM prefixes (LIKE 'X%' matching)
+#   hpi_exclude:  BigQuery re2 regex to detect disease name in HPI (for exclusion filtering)
+#   dx_aliases:   accepted diagnosis names for accuracy evaluation (case-insensitive substring match)
+#   timeline_dir: directory name under timelines/ (for chunk_analysis.py)
+
+acute_mi:
+  icd_10: ["I21", "I22"]
+  icd_9: ["410"]
+  hpi_exclude: "(?i)myocardial infarction|\\bMI\\b|\\bSTEMI\\b|\\bNSTEMI\\b|heart attack|\\bAMI\\b"
+  dx_aliases: ["myocardial infarction", "acute myocardial infarction", "MI", "STEMI",
+               "NSTEMI", "heart attack", "acute coronary syndrome", "ACS"]
+  timeline_dir: acute_mi
+
+acute_pancreatitis:
+  icd_10: ["K85"]
+  icd_9: ["5770"]
+  hpi_exclude: "(?i)pancreatitis"
+  dx_aliases: ["pancreatitis", "acute pancreatitis", "necrotizing pancreatitis"]
+  timeline_dir: acute_pancreatitis
+
+anaphylaxis:
+  icd_10: ["T78"]
+  icd_9: ["9950", "9956"]
+  hpi_exclude: "(?i)anaphyla"
+  dx_aliases: ["anaphylaxis", "anaphylactic shock", "anaphylactic reaction"]
+  timeline_dir: anaphylaxis
+
+appendicitis:
+  icd_10: ["K35", "K37"]
+  icd_9: ["540", "541", "542"]
+  hpi_exclude: "(?i)appendicitis|\\bappy\\b"
+  dx_aliases: ["appendicitis", "acute appendicitis", "perforated appendicitis"]
+  timeline_dir: appendicitis
+
+cholecystitis:
+  icd_10: ["K81"]
+  icd_9: ["5750", "57510", "57511", "57512"]
+  hpi_exclude: "(?i)cholecystitis"
+  dx_aliases: ["cholecystitis", "acute cholecystitis"]
+  timeline_dir: cholecystitis
+
+cholelithiasis:
+  icd_10: ["K80"]
+  icd_9: ["574"]
+  hpi_exclude: "(?i)cholelithiasis|gallstone|gallbladder stone|biliary colic"
+  dx_aliases: ["cholelithiasis", "gallstones", "gallbladder stones", "biliary colic"]
+  timeline_dir: cholelithiasis
+
+diverticulitis:
+  # Inflammatory only — excludes diverticulosis/bleeding (K57.1x/3x/5x/9x odd digits)
+  icd_10: ["K570", "K5712", "K5713", "K5720", "K5721", "K5732", "K5733",
+           "K5740", "K5752", "K5780", "K5792", "K5793"]
+  icd_9: ["56201", "56211", "56213"]
+  hpi_exclude: "(?i)diverticul"
+  dx_aliases: ["diverticulitis", "acute diverticulitis", "sigmoid diverticulitis"]
+  timeline_dir: diverticulitis
+
+infective_endocarditis:
+  icd_10: ["I33"]
+  icd_9: ["4210", "4211", "4219"]
+  hpi_exclude: "(?i)endocarditis"
+  dx_aliases: ["endocarditis", "infective endocarditis", "bacterial endocarditis"]
+  timeline_dir: infective_endocarditis
+
+intracerebral_hemorrhage:
+  icd_10: ["I61"]
+  icd_9: ["431"]
+  hpi_exclude: "(?i)intracerebral hemorrhage|\\bICH\\b|intraparenchymal hemorrhage|brain bleed"
+  dx_aliases: ["intracerebral hemorrhage", "ICH", "intraparenchymal hemorrhage",
+               "brain bleed", "hemorrhagic stroke"]
+  timeline_dir: intracerebral_hemorrhage
+
+ischemic_stroke:
+  icd_10: ["I63"]
+  icd_9: ["434"]
+  hpi_exclude: "(?i)\\bstroke\\b|cerebral infarct|\\bCVA\\b"
+  dx_aliases: ["ischemic stroke", "acute ischemic stroke", "stroke",
+               "cerebral infarction", "CVA", "cerebrovascular accident"]
+  timeline_dir: ischemic_stroke
+
+meningitis:
+  icd_10: ["G03"]
+  icd_9: ["320", "321", "322"]
+  hpi_exclude: "(?i)mening"
+  dx_aliases: ["meningitis", "bacterial meningitis", "viral meningitis"]
+  timeline_dir: meningitis
+
+pneumonia:
+  icd_10: ["J18"]
+  icd_9: ["481", "482", "483", "485", "486"]
+  hpi_exclude: "(?i)pneumonia"
+  dx_aliases: ["pneumonia", "community-acquired pneumonia", "aspiration pneumonia",
+               "bacterial pneumonia"]
+  timeline_dir: pneumonia
+
+pulmonary_embolism:
+  icd_10: ["I26"]
+  icd_9: ["41511", "41519"]
+  hpi_exclude: "(?i)pulmonary embolism|\\bPE\\b|pulmonary emboli"
+  dx_aliases: ["pulmonary embolism", "PE", "pulmonary emboli"]
+  timeline_dir: pulmonary_embolism
+
+sepsis:
+  icd_10: ["A41"]
+  icd_9: ["038", "99591", "99592"]
+  hpi_exclude: "(?i)sepsis|septic"
+  dx_aliases: ["sepsis", "septic shock", "severe sepsis", "urosepsis"]
+  timeline_dir: sepsis
+
+tia:
+  icd_10: ["G45"]
+  icd_9: ["435"]
+  hpi_exclude: "(?i)transient ischemic|\\bTIA\\b"
+  dx_aliases: ["TIA", "transient ischemic attack"]
+  timeline_dir: tia
