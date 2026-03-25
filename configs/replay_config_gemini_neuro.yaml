@@ -13,9 +13,6 @@ chunker:
   max_events: 25
   max_event_types: 3
   max_hours: 4.0
-  stop_at:
-    event_type: SERVICE
-    description: "Service: SURG"
   exclude_sources:
     - ICU
   exclude_event_types:

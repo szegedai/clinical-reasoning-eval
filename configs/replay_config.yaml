@@ -8,9 +8,14 @@ prompts:
   step: step_prompt.md
 
 chunker:
-  max_events: 15
-  max_event_types: 2
-  max_hours: 2.0
+  max_events: 25
+  max_event_types: 3
+  max_hours: 4.0
   stop_at:
     event_type: SERVICE
     description: "Service: SURG"
+  exclude_sources:
+    - ICU
+  exclude_event_types:
+    - DISCHARGE_DX
+    - DISCHARGE_FREETEXTDX

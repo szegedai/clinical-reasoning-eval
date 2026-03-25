@@ -93,6 +93,7 @@ class PatientRunner:
         chunker_kwargs: dict | None = None,
         max_retries: int = 3,
         temperature: float = 0.0,
+        max_steps: int | None = None,
     ):
         self.client = client
         self.model = model
@@ -100,6 +101,7 @@ class PatientRunner:
         self.chunker_kwargs = chunker_kwargs or {}
         self.max_retries = max_retries
         self.temperature = temperature
+        self.max_steps = max_steps
 
     def _call_llm(self, messages: list[dict]) -> tuple[str, int, int, float]:
         """Call LLM with retries."""
@@ -150,6 +152,10 @@ class PatientRunner:
         global_index = 0
 
         for chunk in chunker.replay():
+            # Hard cap: stop after max_steps
+            if self.max_steps is not None and chunk.step > self.max_steps:
+                break
+
             step_prompt = self.renderer.render_step(
                 chunk, global_index=global_index, total_steps=total_steps
             )

@@ -58,6 +58,12 @@ def build_runner(cfg: dict) -> PatientRunner:
         chunker_kwargs["max_hours"] = chunker_cfg["max_hours"]
     if "stop_at" in chunker_cfg:
         chunker_kwargs["stop_at"] = chunker_cfg["stop_at"]
+    if "exclude_sources" in chunker_cfg:
+        chunker_kwargs["exclude_sources"] = set(chunker_cfg["exclude_sources"]) if chunker_cfg["exclude_sources"] else None
+    if "exclude_event_types" in chunker_cfg:
+        chunker_kwargs["exclude_event_types"] = set(chunker_cfg["exclude_event_types"]) if chunker_cfg["exclude_event_types"] else None
+    if "max_chunks" in chunker_cfg:
+        chunker_kwargs["max_chunks"] = chunker_cfg["max_chunks"]
 
     return PatientRunner(
         client=client,
@@ -66,6 +72,7 @@ def build_runner(cfg: dict) -> PatientRunner:
         chunker_kwargs=chunker_kwargs,
         temperature=cfg.get("temperature", 0.0),
         max_retries=cfg.get("max_retries", 3),
+        max_steps=cfg.get("max_steps"),
     )
 
 
