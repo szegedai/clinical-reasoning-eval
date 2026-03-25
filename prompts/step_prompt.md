@@ -1,4 +1,4 @@
-## Step {step} of {total_steps}: {label}
+## Step {step}: {label}
 
 **Time into encounter**: {elapsed_hours_start}h – {elapsed_hours_end}h
 **New events this step**: {n_new_events}

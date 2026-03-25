@@ -140,9 +140,6 @@ class PatientRunner:
             str(folder), filename, **self.chunker_kwargs
         )
 
-        summary = chunker.chunk_summary()
-        total_steps = len(summary)
-
         system_prompt = self.renderer.render_system()
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
@@ -157,7 +154,7 @@ class PatientRunner:
                 break
 
             step_prompt = self.renderer.render_step(
-                chunk, global_index=global_index, total_steps=total_steps
+                chunk, global_index=global_index,
             )
             messages.append({"role": "user", "content": step_prompt})
 

@@ -36,7 +36,7 @@ class PromptRenderer:
         renderer = PromptRenderer()
         renderer = PromptRenderer(system_prompt="system_prompt_v2.md")
         system_msg = renderer.render_system()
-        step_msg = renderer.render_step(chunk, global_index=0, total_steps=12)
+        step_msg = renderer.render_step(chunk, global_index=0)
     """
 
     def __init__(
@@ -68,7 +68,6 @@ class PromptRenderer:
         self,
         chunk,  # ReplayChunk
         global_index: int,
-        total_steps: int,
     ) -> str:
         """Render a step prompt for a single replay chunk.
 
@@ -78,8 +77,6 @@ class PromptRenderer:
             The chunk from TimelineChunker.replay().
         global_index : int
             The global event index of the first event in this chunk.
-        total_steps : int
-            Total number of steps in this replay.
         """
         template = self._read(self._step_prompt)
         events = chunk.events
@@ -91,7 +88,6 @@ class PromptRenderer:
 
         return _fill(template, {
             "step": str(chunk.step),
-            "total_steps": str(total_steps),
             "label": chunk.label,
             "elapsed_hours_start": f"{t_start:.1f}" if pd.notna(t_start) else "?",
             "elapsed_hours_end": f"{t_end:.1f}" if pd.notna(t_end) else "?",
