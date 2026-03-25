@@ -25,6 +25,19 @@ class NegativeElapsedTimeError(ValueError):
         )
 
 
+class TooManyChunksError(ValueError):
+    """Raised when a timeline would produce more chunks than the allowed limit."""
+
+    def __init__(self, hadm_id: int, n_chunks: int, max_chunks: int):
+        self.hadm_id = hadm_id
+        self.n_chunks = n_chunks
+        self.max_chunks = max_chunks
+        super().__init__(
+            f"hadm_id={hadm_id}: timeline would produce {n_chunks} chunks "
+            f"(max_chunks={max_chunks}). Skipping to avoid excessive cost."
+        )
+
+
 _STEP1_TYPES = {"ED_ARRIVAL", "DISCHARGE_HPI"}
 _STEP2_TYPES = {
     "TRIAGE_COMPLAINT", "TRIAGE_PAIN", "TRIAGE_VITAL",
@@ -54,11 +67,15 @@ class TimelineChunker:
     filename : str
         CSV filename (e.g. "timeline_20022233.csv").
     max_events : int
-        Approximate max number of events per chunk (soft cap). Default 15.
+        Approximate max number of events per chunk (soft cap). Default 25.
     max_event_types : int
-        Max distinct event types per chunk (soft cap). Default 2.
+        Max distinct event types per chunk (soft cap). Default 3.
     max_hours : float
-        Dynamic chunk fires when elapsed time within window exceeds this. Default 2.0.
+        Dynamic chunk fires when elapsed time within window exceeds this. Default 4.0.
+    exclude_sources : set of str or None
+        Source prefixes to exclude (e.g. {"ICU"} removes ICU_VITAL, ICU_INPUT, etc.).
+    exclude_event_types : set of str or None
+        Event types to exclude (e.g. {"DISCHARGE_DX"} removes diagnosis-revealing events).
     """
 
     def __init__(
@@ -66,10 +83,13 @@ class TimelineChunker:
         folder: str | Path,
         filename: str,
         *,
-        max_events: int = 15,
-        max_event_types: int = 2,
-        max_hours: float = 2.0,
+        max_events: int = 25,
+        max_event_types: int = 3,
+        max_hours: float = 4.0,
         stop_at: dict[str, str] | None = None,
+        exclude_sources: set[str] | None = {"ICU"},
+        exclude_event_types: set[str] | None = {"DISCHARGE_DX", "DISCHARGE_FREETEXTDX"},
+        max_chunks: int | None = None,
     ):
         self.path = Path(folder) / filename
         if not self.path.exists():
@@ -79,14 +99,37 @@ class TimelineChunker:
         self.max_event_types = max_event_types
         self.max_hours = max_hours
         self.stop_at = stop_at
+        self.exclude_sources = exclude_sources
+        self.exclude_event_types = exclude_event_types
+        self.max_chunks = max_chunks
 
         self._df = self._load()
+
+        # Pre-flight check: reject timelines that would produce too many chunks
+        if self.max_chunks is not None:
+            n_chunks = len(self._build_chunks())
+            if n_chunks > self.max_chunks:
+                raise TooManyChunksError(
+                    hadm_id=self.hadm_id,
+                    n_chunks=n_chunks,
+                    max_chunks=self.max_chunks,
+                )
 
     def _load(self) -> pd.DataFrame:
         df = pd.read_csv(self.path, parse_dates=["event_time"])
         # Drop date_only events, they are not part of the timeline
         df = df[df["time_precision"] != "date_only"].copy()
         df.reset_index(drop=True, inplace=True)
+
+        # Filter out excluded sources (e.g. ICU events)
+        if self.exclude_sources:
+            df = df[~df["source"].isin(self.exclude_sources)].copy()
+            df.reset_index(drop=True, inplace=True)
+
+        # Filter out excluded event types (e.g. discharge diagnoses)
+        if self.exclude_event_types:
+            df = df[~df["event_type"].isin(self.exclude_event_types)].copy()
+            df.reset_index(drop=True, inplace=True)
 
         neg = df["elapsed_hours"] < 0
         if neg.any():
