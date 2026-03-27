@@ -18,4 +18,5 @@ chunker:
   exclude_event_types:
     - DISCHARGE_DX
     - DISCHARGE_FREETEXTDX
+    - ED_DIAGNOSIS
   max_chunks: 50

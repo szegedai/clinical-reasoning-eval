@@ -17,7 +17,7 @@ Requires Google Cloud credentials for BigQuery access (dataset extraction only).
 
 ```
 configs/                  # Configuration
-  pathologies.yaml        #   ICD codes, HPI patterns, dx_aliases for all pathologies
+  pathologies.yaml        #   ICD codes, HPI patterns, dx_match/dx_gracious regexes for all pathologies
   replay_config*.yaml     #   replay runner configs (model, chunker params, etc.)
 
 dataset/                  # BigQuery → timeline extraction
@@ -42,6 +42,8 @@ llm/                      # LLM calling
 analysis/                 # Result analysis and visualization
   analyze_results.py      #   accuracy/confidence plots from replay JSONs
   collect_results.py      #   collect per-step results into Excel
+  dx_matcher.py           #   regex-based diagnosis matching (dx_match + dx_gracious tiers)
+  freetextdx.py           #   parse free-text discharge diagnosis from note sections
 
 run_replay.py             # CLI: run replay on a batch of patients
 utils/check_bq_usage.py   # BigQuery cost monitoring
@@ -52,16 +54,13 @@ utils/check_bq_usage.py   # BigQuery cost monitoring
 ### 1. Extract timelines (requires BQ access)
 
 ```bash
-# Create a cohort using pathology config (loads ICD codes from YAML)
-python dataset/create_cohort.py --pathology appendicitis --limit 100 --output cohort.txt
+# Recommended: require ED admission, discharge note, no HPI leak, dx confirmed in discharge note
+python dataset/create_cohort.py --pathology appendicitis --exclude-hpi-dx --require-freetextdx --limit 100 --output cohort.txt
 
-# Or with explicit ICD prefixes
-python dataset/create_cohort.py --icd-range K35,K37 --limit 100 --output cohort.txt
+# Check BQ cost before running
+python dataset/create_cohort.py --pathology appendicitis --require-freetextdx --output /dev/null --dry-run
 
-# Exclude patients whose HPI mentions the diagnosis
-python dataset/create_cohort.py --pathology appendicitis --exclude-hpi-dx --output cohort_clean.txt
-
-# Extract timelines in batch
+# See dataset/README.md for all flags and how they stack
 python dataset/timeline_batch.py --file cohort.txt --output-dir timelines/
 ```
 

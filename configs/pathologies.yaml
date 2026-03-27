@@ -5,116 +5,238 @@
 #   icd_10:       ICD-10-CM prefixes (LIKE 'X%' matching)
 #   icd_9:        ICD-9-CM prefixes (LIKE 'X%' matching)
 #   hpi_exclude:  BigQuery re2 regex to detect disease name in HPI (for exclusion filtering)
-#   dx_aliases:   accepted diagnosis names for accuracy evaluation (case-insensitive substring match)
+#   dx_match:     regexes for correct diagnosis matching (case-insensitive, any match = correct)
+#   dx_gracious:  regexes for partial-credit matching (related but not exact diagnosis)
 #   timeline_dir: directory name under timelines/ (for chunk_analysis.py)
 
 acute_mi:
+  # I21: acute MI (STEMI/NSTEMI/other); I22: subsequent MI (re-infarction)
+  # ICD-9 410: acute MI (all subtypes, 5th digit 0-9 for location/episode)
   icd_10: ["I21", "I22"]
   icd_9: ["410"]
   hpi_exclude: "(?i)myocardial infarction|\\bMI\\b|\\bSTEMI\\b|\\bNSTEMI\\b|heart attack|\\bAMI\\b"
-  dx_aliases: ["myocardial infarction", "acute myocardial infarction", "MI", "STEMI",
-               "NSTEMI", "heart attack", "acute coronary syndrome", "ACS"]
+  dx_match:
+    - "(?i)myocardial infarction|\\bSTEMI\\b|\\bNSTEMI\\b|heart attack|\\bAMI\\b"
+    - "(?i)acute coronary syndrome|\\bACS\\b"
+    - "(?i)\\bMI\\b"
+  dx_gracious:
+    - "(?i)coronary.*(occlusion|thrombosis)"
+    - "(?i)cardiac.*(ischemia|ischaemia)"
   timeline_dir: acute_mi
 
 acute_pancreatitis:
+  # K85: acute pancreatitis (biliary, alcoholic, drug-induced, idiopathic, other)
+  # ICD-9 577.0: acute pancreatitis
   icd_10: ["K85"]
   icd_9: ["5770"]
   hpi_exclude: "(?i)pancreatitis"
-  dx_aliases: ["pancreatitis", "acute pancreatitis", "necrotizing pancreatitis"]
+  dx_match:
+    - "(?i)pancreatitis"
+    - "(?i)pancreatic.*(necrosis|necrotizing)"
+  dx_gracious:
+    - "(?i)gallstone pancreatitis"
+    - "(?i)pancreatic.*(pseudocyst|fluid collection)"
   timeline_dir: acute_pancreatitis
 
 anaphylaxis:
-  icd_10: ["T78"]
+  # T78.0-T78.2: anaphylactic shock (due to food, venom, other); T78.4x: allergy NOS
+  # T88.6: drug-induced anaphylaxis — ICD-10 Excludes1 note explicitly removes this from T78
+  # ICD-9 995.0: anaphylactic shock NOS; 995.6x: anaphylactic reaction due to food
+  icd_10: ["T78", "T886"]
   icd_9: ["9950", "9956"]
   hpi_exclude: "(?i)anaphyla"
-  dx_aliases: ["anaphylaxis", "anaphylactic shock", "anaphylactic reaction"]
+  dx_match:
+    - "(?i)anaphyla"
+  dx_gracious:
+    - "(?i)severe allergic reaction"
+    - "(?i)allergic shock"
   timeline_dir: anaphylaxis
 
 appendicitis:
+  # K35: acute appendicitis (with/without perforation/abscess); K37: unspecified appendicitis
+  # K36 (other appendicitis, chronic) excluded — clinically distinct and rarely ED-presenting
+  # ICD-9 540: acute appendicitis with peritonitis; 541: without; 542: other
   icd_10: ["K35", "K37"]
   icd_9: ["540", "541", "542"]
   hpi_exclude: "(?i)appendicitis|\\bappy\\b"
-  dx_aliases: ["appendicitis", "acute appendicitis", "perforated appendicitis"]
+  dx_match:
+    - "(?i)appendicitis|appendectomy"
+    - "(?i)appendi.*(abscess|ruptur|perforat|gangren|necros|inflam|infect)"
+    - "(?i)(perforat|ruptur).*appendi"
+  dx_gracious:
+    - "(?i)(RLQ|right lower quadrant).*(abscess|phlegmon)"
+    - "(?i)perforated.*(cecum|cecal|caecal)"
   timeline_dir: appendicitis
 
 cholecystitis:
+  # K81: cholecystitis (acute, chronic, other); excludes K80 (cholelithiasis without inflammation)
+  # ICD-9 575.0: acute cholecystitis; 575.10-575.12: other/unspecified/chronic
   icd_10: ["K81"]
   icd_9: ["5750", "57510", "57511", "57512"]
   hpi_exclude: "(?i)cholecystitis"
-  dx_aliases: ["cholecystitis", "acute cholecystitis"]
+  dx_match:
+    - "(?i)cholecystit"
+    - "(?i)cholecystectomy"
+    - "(?i)gallbladder.*(gangren|infect|inflam|abscess|necros|perforat)"
+    - "(?i)(gangren|perforat).*gallbladder"
+  dx_gracious:
+    - "(?i)acute.*(gallbladder|biliary).*(disease|attack|colic)"
+    - "(?i)cholangitis"
   timeline_dir: cholecystitis
 
 cholelithiasis:
+  # K80: cholelithiasis (gallstones with/without cholecystitis, with/without obstruction)
+  # ICD-9 574: cholelithiasis (all subtypes)
   icd_10: ["K80"]
   icd_9: ["574"]
   hpi_exclude: "(?i)cholelithiasis|gallstone|gallbladder stone|biliary colic"
-  dx_aliases: ["cholelithiasis", "gallstones", "gallbladder stones", "biliary colic"]
+  dx_match:
+    - "(?i)cholelithiasis|gallstone|gallbladder stone"
+    - "(?i)biliary colic"
+  dx_gracious:
+    - "(?i)choledocholithiasis"
+    - "(?i)biliary.*(obstruction|sludge)"
   timeline_dir: cholelithiasis
 
 diverticulitis:
-  # Inflammatory only — excludes diverticulosis/bleeding (K57.1x/3x/5x/9x odd digits)
+  # Inflammatory subcodes only — excludes diverticulosis/bleeding (K57 odd 2nd digit = without abscess/perforation)
+  # Pattern: K57.X0/X2/X3 = with abscess or perforation; K57.X1/X5/X9 = diverticulosis (excluded)
+  # ICD-9: 562.X1 = diverticulitis without hemorrhage; 562.X3 = diverticulitis with hemorrhage
   icd_10: ["K570", "K5712", "K5713", "K5720", "K5721", "K5732", "K5733",
-           "K5740", "K5752", "K5780", "K5792", "K5793"]
-  icd_9: ["56201", "56211", "56213"]
+           "K5740", "K5752", "K5780", "K5781", "K5792", "K5793"]
+  icd_9: ["56201", "56203", "56211", "56213"]
   hpi_exclude: "(?i)diverticul"
-  dx_aliases: ["diverticulitis", "acute diverticulitis", "sigmoid diverticulitis"]
+  dx_match:
+    - "(?i)diverticul.*(itis|abscess|inflam|infect|perforat|ruptur)"
+    - "(?i)diverticulitis"
+    - "(?i)perforat.*(diverticul|sigmoid)"
+  dx_gracious:
+    - "(?i)sigmoid.*(colitis|perforat|abscess)"
+    - "(?i)(colonic|colon).*(perforat|abscess)"
+    - "(?i)pericolic abscess"
   timeline_dir: diverticulitis
 
 infective_endocarditis:
+  # I33: acute and subacute infective endocarditis; excludes I38 (endocarditis NOS, non-infective)
+  # ICD-9 421.0: acute/subacute bacterial; 421.1: other organism; 421.9: unspecified
   icd_10: ["I33"]
   icd_9: ["4210", "4211", "4219"]
   hpi_exclude: "(?i)endocarditis"
-  dx_aliases: ["endocarditis", "infective endocarditis", "bacterial endocarditis"]
+  dx_match:
+    - "(?i)endocarditis"
+  dx_gracious:
+    - "(?i)valvular.*(infection|vegetation|abscess)"
   timeline_dir: infective_endocarditis
 
 intracerebral_hemorrhage:
+  # I61: non-traumatic intracerebral hemorrhage (all locations)
+  # Excludes I60 (subarachnoid hemorrhage) and I62 (subdural/epidural hematoma)
+  # ICD-9 431: intracerebral hemorrhage
   icd_10: ["I61"]
   icd_9: ["431"]
   hpi_exclude: "(?i)intracerebral hemorrhage|\\bICH\\b|intraparenchymal hemorrhage|brain bleed"
-  dx_aliases: ["intracerebral hemorrhage", "ICH", "intraparenchymal hemorrhage",
-               "brain bleed", "hemorrhagic stroke"]
+  dx_match:
+    - "(?i)\\bICH\\b|\\bIPH\\b|\\bIVH\\b"
+    - "(?i)(intracerebral|intra.?parenchymal|inter.?parenchymal|intraventricular|intracranial)\\s*(hemorrhage|bleed)"
+    - "(?i)(basal ganglia|cerebellar|pontine|thalamic|parietal|frontal|temporal|occipital|putamen|corona radiata|brain).*(hemorrhage|bleed)"
+    - "(?i)(hemorrhage|bleed).*(basal ganglia|cerebellar|pontine|thalamic|parietal|frontal|temporal|occipital|putamen|corona radiata|brain)"
+    - "(?i)hemorrhagic stroke"
+  dx_gracious:
+    - "(?i)hemorrhagic (conversion|transformation)"
+    - "(?i)cerebral hemorrhage"
   timeline_dir: intracerebral_hemorrhage
 
 ischemic_stroke:
+  # I63: cerebral infarction (all subtypes: thrombotic, embolic, lacunar, by vascular territory)
+  # Excludes I64 (stroke NOS, unspecified as ischemic/hemorrhagic) — too ambiguous
+  # ICD-9 434: occlusion of cerebral arteries (434.0 thrombosis, 434.1 embolism, 434.9 unspecified)
+  # ICD-9 433.x1: precerebral artery occlusion WITH infarction (x1 = with infarction, x0 = without; adds ~4% sensitivity)
   icd_10: ["I63"]
-  icd_9: ["434"]
+  icd_9: ["434", "43301", "43311", "43321", "43331", "43381", "43391"]
   hpi_exclude: "(?i)\\bstroke\\b|cerebral infarct|\\bCVA\\b"
-  dx_aliases: ["ischemic stroke", "acute ischemic stroke", "stroke",
-               "cerebral infarction", "CVA", "cerebrovascular accident"]
+  dx_match:
+    - "(?i)ischemic stroke|\\bCVA\\b|cerebrovascular accident"
+    - "(?i)(cerebral|cerebellar|lacunar|pontine|MCA|PICA|PCA|ACA)\\s*(infarct|infarction)"
+    - "(?i)(infarct|infarction).*(cerebral|cerebellar|MCA|PICA|PCA|ACA)"
+    - "(?i)acute.*(stroke|infarct)"
+    - "(?i)embolic stroke"
+    - "(?i)stroke"
+  dx_gracious:
+    - "(?i)\\binfarct"
+    - "(?i)cerebral.*(ischemia|ischaemia)"
   timeline_dir: ischemic_stroke
 
 meningitis:
-  icd_10: ["G03"]
+  # G00: bacterial meningitis (haemophilus, pneumococcal, streptococcal, staphylococcal, other)
+  # G03: meningitis due to other and unspecified causes (viral NOS, unspecified)
+  # G01/G02 excluded — manifestation codes requiring an underlying primary disease, can't be seq_num=1
+  # ICD-9 320: bacterial meningitis; 321: meningitis due to other organisms; 322: unspecified
+  icd_10: ["G00", "G03"]
   icd_9: ["320", "321", "322"]
   hpi_exclude: "(?i)mening"
-  dx_aliases: ["meningitis", "bacterial meningitis", "viral meningitis"]
+  dx_match:
+    - "(?i)meningitis"
+    - "(?i)meningoencephalitis"
+  dx_gracious:
+    - "(?i)\\bCSF\\b.*(infection|pleocytosis)"
+    - "(?i)ventriculitis"
   timeline_dir: meningitis
 
 pneumonia:
-  icd_10: ["J18"]
+  # J13-J16: organism-specific pneumonias (strep pneumo, H. influenzae, other bacterial, other organisms)
+  # J18: pneumonia unspecified organism
+  # J12 (viral) excluded — ICD-9 480 not in our list; J17 excluded — manifestation code, can't be seq_num=1
+  # ICD-9: 481 (pneumococcal), 482 (other bacterial), 483 (atypical), 485 (bronchopneumonia), 486 (unspecified)
+  icd_10: ["J13", "J14", "J15", "J16", "J18"]
   icd_9: ["481", "482", "483", "485", "486"]
   hpi_exclude: "(?i)pneumonia"
-  dx_aliases: ["pneumonia", "community-acquired pneumonia", "aspiration pneumonia",
-               "bacterial pneumonia"]
+  dx_match:
+    - "(?i)pneumonia"
+  dx_gracious:
+    - "(?i)lower respiratory.*(infection|tract)"
+    - "(?i)pulmonary.*(infiltrate|consolidation).*infect"
   timeline_dir: pneumonia
 
 pulmonary_embolism:
+  # I26: pulmonary embolism (with/without acute cor pulmonale; saddle embolus)
+  # ICD-9 415.11: iatrogenic PE; 415.19: other PE (excludes 415.12 septic PE — too rare)
   icd_10: ["I26"]
   icd_9: ["41511", "41519"]
   hpi_exclude: "(?i)pulmonary embolism|\\bPE\\b|pulmonary emboli"
-  dx_aliases: ["pulmonary embolism", "PE", "pulmonary emboli"]
+  dx_match:
+    - "(?i)pulmonary emboli"
+    - "(?i)\\bPE\\b"
+  dx_gracious:
+    - "(?i)pulmonary.*(thrombus|thromboembolism)"
+    - "(?i)deep vein thrombosis.*pulmonary"
   timeline_dir: pulmonary_embolism
 
 sepsis:
-  icd_10: ["A41"]
+  # A40: streptococcal sepsis; A41: sepsis due to other/unspecified organisms
+  # ICD-9 038: septicemia (includes streptococcal 038.0, so both covered); 995.91: sepsis; 995.92: severe sepsis
+  icd_10: ["A40", "A41"]
   icd_9: ["038", "99591", "99592"]
   hpi_exclude: "(?i)sepsis|septic"
-  dx_aliases: ["sepsis", "septic shock", "severe sepsis", "urosepsis"]
+  dx_match:
+    - "(?i)sepsis|septic shock"
+    - "(?i)urosepsis"
+  dx_gracious:
+    - "(?i)bacteremia|bacteraemia"
+    - "(?i)\\bSIRS\\b"
   timeline_dir: sepsis
 
 tia:
-  icd_10: ["G45"]
+  # G45.0-G45.3: vascular territory TIAs (vertebrobasilar, carotid, bilateral, amaurosis fugax)
+  # G45.8: other TIA; G45.9: TIA unspecified
+  # G45.4 (transient global amnesia) excluded — TGA is a distinct condition, not a TIA
+  # ICD-9 435: transient cerebral ischemia (TGA is 437.7 in ICD-9, already excluded by this prefix)
+  icd_10: ["G450", "G451", "G452", "G453", "G458", "G459"]
   icd_9: ["435"]
   hpi_exclude: "(?i)transient ischemic|\\bTIA\\b"
-  dx_aliases: ["TIA", "transient ischemic attack"]
+  dx_match:
+    - "(?i)transient ischemic|\\bTIA\\b"
+    - "(?i)amaurosis fugax"
+  dx_gracious:
+    - "(?i)transient neurolog"
+    - "(?i)vertebrobasilar insufficiency"
   timeline_dir: tia

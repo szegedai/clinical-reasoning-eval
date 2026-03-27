@@ -6,6 +6,9 @@ Usage:
   python create_cohort.py --pathology appendicitis --output appendicitis_ids.txt
   python create_cohort.py --pathology appendicitis --exclude-hpi-dx --output appendicitis_clean.txt
 
+  # Require free-text discharge diagnosis to match pathology regexes:
+  python create_cohort.py --pathology appendicitis --require-freetextdx --output appendicitis_ids.txt
+
   # Using explicit ICD prefixes (backwards compatible):
   python create_cohort.py --icd-range K35,K37 --output appendicitis_ids.txt
   python create_cohort.py --icd-range K35,K37 --exclude-hpi-dx --hpi-pattern "(?i)appendicitis" --output out.txt
@@ -48,13 +51,15 @@ def build_cohort_query(
     require_ed: bool,
     limit: int = None,
     exclude_hpi_pattern: str = None,
+    require_freetextdx_patterns: list[str] = None,
 ) -> str:
     icd_conditions = " OR ".join(
         f"dx.icd_code LIKE '{prefix}%'" for prefix in icd_prefixes
     )
 
+    needs_note = require_note or exclude_hpi_pattern or require_freetextdx_patterns
     note_join = ""
-    if require_note or exclude_hpi_pattern:
+    if needs_note:
         note_join = f"""
   JOIN `{NOTE_DS}.discharge` n ON n.hadm_id = dx.hadm_id"""
 
@@ -65,28 +70,55 @@ def build_cohort_query(
 
     limit_clause = f"\nLIMIT {limit}" if limit else ""
 
-    if exclude_hpi_pattern:
-        # CTE-based query: extract HPI, then filter out disease mentions
-        return f"""
-WITH base AS (
-  SELECT DISTINCT
-    dx.hadm_id,
-    COALESCE(
+    needs_cte = exclude_hpi_pattern or require_freetextdx_patterns
+    if needs_cte:
+        # CTE-based query: extract text sections, then filter
+        cte_columns = ["dx.hadm_id"]
+        where_clauses = []
+
+        if exclude_hpi_pattern:
+            cte_columns.append("""COALESCE(
       REGEXP_EXTRACT(
         REPLACE(n.text, '\\n', ' '),
         r'(?i)(?:history|___) of present(?:ing)? illness:(.+?)(?:physical exam(?:ination)?:|physical ___:|(?:pertinent|___) results:|hospital course:)'
       ),
       ''
-    ) AS hpi
+    ) AS hpi""")
+            where_clauses.append(
+                f"NOT REGEXP_CONTAINS(hpi, r'{exclude_hpi_pattern}')"
+            )
+
+        if require_freetextdx_patterns:
+            cte_columns.append("""COALESCE(
+      REGEXP_EXTRACT(
+        REPLACE(n.text, '\\n', ' '),
+        r'(?i)(?:discharge|___) diagnosis:(.+?)(?:discharge condition|___ condition|condition:|procedure)'
+      ),
+      ''
+    ) AS freetextdx""")
+            combined = "|".join(
+                f"(?:{p})" for p in require_freetextdx_patterns
+            )
+            where_clauses.append(
+                f"REGEXP_CONTAINS(freetextdx, r'{combined}')"
+            )
+
+        cte_select = ",\n    ".join(cte_columns)
+        filter_clause = "\n  AND ".join(where_clauses)
+
+        return f"""
+WITH base AS (
+  SELECT DISTINCT
+    {cte_select}
   FROM `{HOSP_DS}.diagnoses_icd` dx{note_join}{ed_join}
   WHERE dx.seq_num = 1
     AND ({icd_conditions})
 )
 SELECT hadm_id FROM base
-WHERE NOT REGEXP_CONTAINS(hpi, r'{exclude_hpi_pattern}'){limit_clause}
+WHERE {filter_clause}{limit_clause}
 """
     else:
-        # Simple query without HPI filtering
+        # Simple query without text filtering
         return f"""
 SELECT DISTINCT dx.hadm_id
 FROM `{HOSP_DS}.diagnoses_icd` dx{note_join}{ed_join}
@@ -142,6 +174,10 @@ def main():
         help="BQ re2 regex for disease name in HPI (required with --exclude-hpi-dx + --icd-range)",
     )
     parser.add_argument(
+        "--require-freetextdx", action="store_true",
+        help="Require discharge note free-text diagnosis to match pathology regexes (dx_match + dx_gracious)",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Show the SQL and estimated bytes without executing",
     )
@@ -165,12 +201,22 @@ def main():
         if not args.require_note:
             print("Note: --exclude-hpi-dx forces discharge note JOIN (overrides --no-require-note)")
 
+    # Validate --require-freetextdx usage
+    freetextdx_patterns = None
+    if args.require_freetextdx:
+        if not args.pathology:
+            sys.exit("--require-freetextdx requires --pathology (loads dx_match + dx_gracious from YAML)")
+        freetextdx_patterns = cfg.get("dx_match", []) + cfg.get("dx_gracious", [])
+        if not freetextdx_patterns:
+            sys.exit(f"No dx_match or dx_gracious patterns found for {args.pathology}")
+
     sql = build_cohort_query(
         icd_prefixes=prefixes,
         require_note=args.require_note,
         require_ed=args.require_ed,
         limit=args.limit,
         exclude_hpi_pattern=exclude_pattern,
+        require_freetextdx_patterns=freetextdx_patterns,
     )
 
     print(f"ICD prefixes: {prefixes}")
@@ -178,6 +224,8 @@ def main():
     print(f"Require ED:   {args.require_ed}")
     if exclude_pattern:
         print(f"HPI exclude:  {exclude_pattern}")
+    if freetextdx_patterns:
+        print(f"Require freetextdx: {len(freetextdx_patterns)} patterns")
 
     client = bigquery.Client(project=args.project)
 
