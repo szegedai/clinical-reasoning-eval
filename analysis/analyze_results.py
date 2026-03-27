@@ -27,23 +27,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import yaml
 
-CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
+from .dx_matcher import DxMatcher
 
-
-def load_dx_aliases() -> dict[str, list[str]]:
-    """Load dx_aliases from pathologies.yaml."""
-    with open(CONFIGS_DIR / "pathologies.yaml") as f:
-        all_cfg = yaml.safe_load(f)
-    aliases = {}
-    for name, cfg in all_cfg.items():
-        raw = cfg.get("dx_aliases", [name.replace("_", " ")])
-        aliases[name] = [a.lower() for a in raw]
-    return aliases
-
-
-DX_ALIASES = load_dx_aliases()
+MATCHER = DxMatcher()
 
 
 def load_results(result_dir: Path) -> list[dict]:
@@ -54,15 +41,6 @@ def load_results(result_dir: Path) -> list[dict]:
         with open(f) as fh:
             results.append(json.load(fh))
     return results
-
-
-def is_correct(diagnosis: str, pathology: str, target_dx: str | None = None) -> bool:
-    """Check if a diagnosis string matches the target pathology."""
-    dx_lower = diagnosis.lower().strip()
-    aliases = list(DX_ALIASES.get(pathology, [pathology.replace("_", " ")]))
-    if target_dx:
-        aliases = list(set(aliases + [target_dx.lower()]))
-    return any(a in dx_lower or dx_lower in a for a in aliases)
 
 
 def extract_step_data(results: list[dict], pathology: str,
@@ -80,16 +58,24 @@ def extract_step_data(results: list[dict], pathology: str,
 
             top1_dx = diff[0]["diagnosis"] if len(diff) > 0 else ""
             top1_conf = diff[0]["confidence"] if len(diff) > 0 else 0.0
-            top1_correct = is_correct(top1_dx, pathology, target_dx) if top1_dx else False
+            top1_correct = MATCHER.is_correct(top1_dx, pathology) if top1_dx else False
+            top1_gracious = (
+                top1_correct or MATCHER.is_gracious(top1_dx, pathology)
+            ) if top1_dx else False
 
             top3_correct = any(
-                is_correct(d["diagnosis"], pathology, target_dx)
+                MATCHER.is_correct(d["diagnosis"], pathology)
+                for d in diff[:3]
+            ) if diff else False
+            top3_gracious = any(
+                MATCHER.is_correct(d["diagnosis"], pathology)
+                or MATCHER.is_gracious(d["diagnosis"], pathology)
                 for d in diff[:3]
             ) if diff else False
 
             # Check if target ever appeared with >=90% confidence in any rank
             high_conf = any(
-                is_correct(d["diagnosis"], pathology, target_dx) and d["confidence"] >= 0.9
+                MATCHER.is_correct(d["diagnosis"], pathology) and d["confidence"] >= 0.9
                 for d in diff
             ) if diff else False
 
@@ -101,7 +87,9 @@ def extract_step_data(results: list[dict], pathology: str,
                 "top1_dx": top1_dx,
                 "top1_conf": top1_conf,
                 "top1_correct": top1_correct,
+                "top1_gracious": top1_gracious,
                 "top3_correct": top3_correct,
+                "top3_gracious": top3_gracious,
                 "high_conf_correct": high_conf,
                 "ddx_size": len(diff),
                 "input_tokens": step.get("input_tokens", 0),
@@ -115,7 +103,6 @@ def extract_step_data(results: list[dict], pathology: str,
 def compute_accuracy_series(df: pd.DataFrame, max_steps: int) -> pd.DataFrame:
     """Compute per-step accuracy metrics across patients."""
     records = []
-    all_hadm = set(df["hadm_id"].unique())
 
     for step_num in range(1, max_steps + 1):
         step_df = df[df["step"] == step_num]
@@ -124,7 +111,9 @@ def compute_accuracy_series(df: pd.DataFrame, max_steps: int) -> pd.DataFrame:
             continue
 
         top1_acc = step_df["top1_correct"].mean()
+        top1_gracious_acc = step_df["top1_gracious"].mean()
         top3_acc = step_df["top3_correct"].mean()
+        top3_gracious_acc = step_df["top3_gracious"].mean()
 
         # Cumulative "ever correct" up to this step
         up_to = df[df["step"] <= step_num]
@@ -134,7 +123,9 @@ def compute_accuracy_series(df: pd.DataFrame, max_steps: int) -> pd.DataFrame:
         records.append({
             "step": step_num,
             "top1_accuracy": top1_acc,
+            "top1_gracious": top1_gracious_acc,
             "top3_accuracy": top3_acc,
+            "top3_gracious": top3_gracious_acc,
             "ever_top1": ever_top1,
             "ever_high_conf": ever_high_conf,
             "active_patients": active,
