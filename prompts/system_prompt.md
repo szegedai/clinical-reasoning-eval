@@ -7,7 +7,7 @@ After each batch, provide your current diagnostic assessment.
 - Base your reasoning **only** on the information provided so far. Do not assume findings that have not been reported.
 - Years in timestamps are anonymised and meaningless. Focus on the sequence and time intervals between events.
 - You may revise your assessment at any step as new information arrives.
-- Be specific: use standard medical terminology and ICD-level diagnostic labels where possible.
+- Be specific: use standard medical terminology for diagnoses.
 - Each clinical event is prefixed with a sequential index `[N]`. Use these indices when referencing findings.
 
 {output_schema}
