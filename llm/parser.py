@@ -12,9 +12,11 @@ class ParsedResponse:
     """Structured result from parsing an LLM response."""
 
     assessment: str | None = None
+    delta: str | None = None
     differential: list[dict] | None = None  # [{"diagnosis": str, "confidence": float}]
     key_findings: list[int] | None = None
-    recommended_actions: list[dict] | None = None  # [{"action": str, "detail": str}]
+    actions: list[dict] | None = None  # [{"action": str, "detail": str}]
+    confident_in_diagnosis: bool | None = None
     raw_json: dict | None = None
     parse_error: str | None = None
 
@@ -102,22 +104,37 @@ def parse_and_validate(text: str) -> ParsedResponse:
     else:
         key_findings = None
 
-    # Extract recommended_actions
-    recommended_actions = raw.get("recommended_actions")
-    if isinstance(recommended_actions, list):
+    # Extract delta
+    delta = raw.get("delta")
+    valid_deltas = {"new_hypothesis", "strengthened", "weakened", "revised", "unchanged"}
+    if not isinstance(delta, str) or delta not in valid_deltas:
+        errors.append(f"invalid or missing 'delta' (got {delta!r})")
+        delta = None
+
+    # Extract actions
+    actions = raw.get("actions")
+    if isinstance(actions, list):
         valid_actions = []
-        for entry in recommended_actions:
+        for entry in actions:
             if isinstance(entry, dict) and "action" in entry:
                 valid_actions.append(entry)
-        recommended_actions = valid_actions if valid_actions else None
+        actions = valid_actions if valid_actions else None
     else:
-        recommended_actions = None
+        actions = None
+
+    # Extract confident_in_diagnosis
+    confident = raw.get("confident_in_diagnosis")
+    if not isinstance(confident, bool):
+        errors.append(f"invalid or missing 'confident_in_diagnosis' (got {confident!r})")
+        confident = None
 
     return ParsedResponse(
         assessment=assessment,
+        delta=delta,
         differential=differential,
         key_findings=key_findings,
-        recommended_actions=recommended_actions,
+        actions=actions,
+        confident_in_diagnosis=confident,
         raw_json=raw,
         parse_error="; ".join(errors) if errors else None,
     )

@@ -40,9 +40,11 @@ class StepResult:
         if self.parsed:
             d["parsed"] = {
                 "assessment": self.parsed.assessment,
+                "delta": self.parsed.delta,
                 "differential": self.parsed.differential,
                 "key_findings": self.parsed.key_findings,
-                "recommended_actions": self.parsed.recommended_actions,
+                "actions": self.parsed.actions,
+                "confident_in_diagnosis": self.parsed.confident_in_diagnosis,
                 "raw_json": self.parsed.raw_json,
                 "parse_error": self.parsed.parse_error,
             }
