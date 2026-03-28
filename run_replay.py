@@ -73,6 +73,7 @@ def build_runner(cfg: dict) -> PatientRunner:
         temperature=cfg.get("temperature", 0.0),
         max_retries=cfg.get("max_retries", 3),
         max_steps=cfg.get("max_steps"),
+        stop_after_confidence=cfg.get("stop_after_confidence"),
     )
 
 

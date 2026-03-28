@@ -67,6 +67,7 @@ class PatientResult:
     finished_at: str
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    first_confident_step: int | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +80,7 @@ class PatientResult:
             "finished_at": self.finished_at,
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
+            "first_confident_step": self.first_confident_step,
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -96,6 +98,7 @@ class PatientRunner:
         max_retries: int = 3,
         temperature: float = 0.0,
         max_steps: int | None = None,
+        stop_after_confidence: int | None = None,
     ):
         self.client = client
         self.model = model
@@ -104,6 +107,7 @@ class PatientRunner:
         self.max_retries = max_retries
         self.temperature = temperature
         self.max_steps = max_steps
+        self.stop_after_confidence = stop_after_confidence
 
     def _call_llm(self, messages: list[dict]) -> tuple[str, int, int, float]:
         """Call LLM with retries."""
@@ -149,10 +153,18 @@ class PatientRunner:
         total_input = 0
         total_output = 0
         global_index = 0
+        steps_since_confidence: int | None = None  # None = not yet confident
+        first_confident_step: int | None = None
 
         for chunk in chunker.replay():
             # Hard cap: stop after max_steps
             if self.max_steps is not None and chunk.step > self.max_steps:
+                break
+
+            # Confidence-based stop: ran enough extra steps after first confidence
+            if (self.stop_after_confidence is not None
+                    and steps_since_confidence is not None
+                    and steps_since_confidence > self.stop_after_confidence):
                 break
 
             step_prompt = self.renderer.render_step(
@@ -184,6 +196,13 @@ class PatientRunner:
 
             global_index += len(chunk.events)
 
+            # Track steps since first confidence (never resets)
+            if steps_since_confidence is not None:
+                steps_since_confidence += 1
+            elif parsed.confident_in_diagnosis is True:
+                steps_since_confidence = 0
+                first_confident_step = chunk.step
+
         finished_at = datetime.now(timezone.utc).isoformat()
 
         return PatientResult(
@@ -197,4 +216,5 @@ class PatientRunner:
             finished_at=finished_at,
             total_input_tokens=total_input,
             total_output_tokens=total_output,
+            first_confident_step=first_confident_step,
         )

@@ -4,6 +4,7 @@ api_key_env: GEMINI_API_KEY
 temperature: 0.0
 max_retries: 3
 max_steps: 20
+stop_after_confidence: 5
 
 prompts:
   system: system_prompt.md

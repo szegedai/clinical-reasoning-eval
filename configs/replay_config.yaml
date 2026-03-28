@@ -2,6 +2,7 @@ model: gpt-4o
 base_url: null
 temperature: 0.0
 max_retries: 3
+stop_after_confidence: 5
 
 prompts:
   system: system_prompt.md
