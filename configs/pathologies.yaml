@@ -79,6 +79,8 @@ cholecystitis:
     - "(?i)cholecystectomy"
     - "(?i)gallbladder.*(gangren|infect|inflam|abscess|necros|perforat)"
     - "(?i)(gangren|perforat).*gallbladder"
+    - "(?i)biliary colic"
+    - "(?i)choledocholithiasis"
   dx_gracious:
     - "(?i)acute.*(gallbladder|biliary).*(disease|attack|colic)"
     - "(?i)cholangitis"
@@ -114,6 +116,8 @@ diverticulitis:
     - "(?i)sigmoid.*(colitis|perforat|abscess)"
     - "(?i)(colonic|colon).*(perforat|abscess)"
     - "(?i)pericolic abscess"
+    - "(?i)perforat.*(viscus|bowel)"
+    - "(?i)peritonitis"
   timeline_dir: diverticulitis
 
 infective_endocarditis:
@@ -239,4 +243,6 @@ tia:
   dx_gracious:
     - "(?i)transient neurolog"
     - "(?i)vertebrobasilar insufficiency"
+    - "(?i)\\bstroke\\b|\\bCVA\\b|cerebrovascular accident"
+    - "(?i)(cerebral|cerebellar|lacunar)\\s*(infarct|infarction)"
   timeline_dir: tia
