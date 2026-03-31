@@ -55,10 +55,7 @@ def parse_llm_json(text: str) -> dict | None:
 
 
 def parse_and_validate(text: str) -> ParsedResponse:
-    """Parse LLM response text and validate required fields.
-
-    Never raises — sets parse_error on failure.
-    """
+    """Parse LLM response text and validate required fields."""
     raw = parse_llm_json(text)
     if raw is None:
         return ParsedResponse(parse_error="Could not extract JSON from response")
@@ -68,13 +65,11 @@ def parse_and_validate(text: str) -> ParsedResponse:
 
     errors = []
 
-    # Extract and validate assessment
     assessment = raw.get("assessment")
     if not isinstance(assessment, str) or not assessment.strip():
         errors.append("missing or empty 'assessment'")
         assessment = None
 
-    # Extract and validate differential
     differential = raw.get("differential")
     if isinstance(differential, list):
         valid_diffs = []
@@ -95,7 +90,6 @@ def parse_and_validate(text: str) -> ParsedResponse:
         errors.append("missing or invalid 'differential'")
         differential = None
 
-    # Extract key_findings
     key_findings = raw.get("key_findings")
     if isinstance(key_findings, list):
         key_findings = [x for x in key_findings if isinstance(x, int)]
@@ -104,14 +98,12 @@ def parse_and_validate(text: str) -> ParsedResponse:
     else:
         key_findings = None
 
-    # Extract delta
     delta = raw.get("delta")
     valid_deltas = {"new_hypothesis", "strengthened", "weakened", "revised", "unchanged"}
     if not isinstance(delta, str) or delta not in valid_deltas:
         errors.append(f"invalid or missing 'delta' (got {delta!r})")
         delta = None
 
-    # Extract actions
     actions = raw.get("actions")
     if isinstance(actions, list):
         valid_actions = []
@@ -122,7 +114,6 @@ def parse_and_validate(text: str) -> ParsedResponse:
     else:
         actions = None
 
-    # Extract confident_in_diagnosis
     confident = raw.get("confident_in_diagnosis")
     if not isinstance(confident, bool):
         errors.append(f"invalid or missing 'confident_in_diagnosis' (got {confident!r})")

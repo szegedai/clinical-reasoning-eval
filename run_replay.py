@@ -83,11 +83,14 @@ def main():
     parser.add_argument("--timeline-dir", type=str, required=True, help="Directory of timeline CSVs")
     parser.add_argument("--output", "-o", type=str, required=True, help="Output directory for results")
     parser.add_argument("--skip-existing", action="store_true", help="Skip patients with existing result files")
+    parser.add_argument("--limit", type=int, default=None, help="Max number of patients to process")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     timeline_dir = Path(args.timeline_dir)
     timeline_files = sorted(timeline_dir.glob("timeline_*.csv"))
+    if args.limit:
+        timeline_files = timeline_files[:args.limit]
 
     if not timeline_files:
         print(f"No timeline_*.csv files found in {timeline_dir}", file=sys.stderr)

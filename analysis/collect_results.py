@@ -28,6 +28,7 @@ def main():
     rows = []
     for f in files:
         data = json.loads(f.read_text())
+        first_confident_step = data.get("first_confident_step")
         for step in data["steps"]:
             parsed = step.get("parsed") or {}
             # Top diagnosis from differential
@@ -35,16 +36,34 @@ def main():
             top_dx = diff[0]["diagnosis"] if diff else None
             top_conf = diff[0]["confidence"] if diff else None
 
+            # All 5 differentials
+            diff_str = "; ".join(
+                "{} ({:.0%})".format(d["diagnosis"], d["confidence"])
+                for d in diff
+            ) if diff else ""
+
+            # Actions
+            actions = parsed.get("actions") or []
+            actions_str = "; ".join(
+                "{}: {}".format(a.get("action", ""), a.get("detail", ""))
+                for a in actions
+            ) if actions else ""
+
             rows.append({
                 "hadm_id": data["hadm_id"],
                 "step": step["step"],
                 "label": step["label"],
                 "n_events": step["n_events"],
                 "assessment": parsed.get("assessment"),
+                "delta": parsed.get("delta"),
                 "top_diagnosis": top_dx,
                 "top_confidence": top_conf,
+                "differential": diff_str,
                 "n_differentials": len(diff),
+                "confident_in_diagnosis": parsed.get("confident_in_diagnosis"),
+                "first_confident_step": first_confident_step,
                 "key_findings": str(parsed.get("key_findings") or ""),
+                "actions": actions_str,
                 "input_tokens": step["input_tokens"],
                 "output_tokens": step["output_tokens"],
                 "latency_ms": step["latency_ms"],
