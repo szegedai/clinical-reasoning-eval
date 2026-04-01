@@ -43,18 +43,31 @@ def load_results(result_dir: Path) -> list[dict]:
     return results
 
 
+def entropy(confidences: list[float]) -> float:
+    """Shannon entropy of a confidence distribution (bits)."""
+    h = 0.0
+    for p in confidences:
+        if p > 0:
+            h -= p * np.log2(p)
+    return h
+
+
 def extract_step_data(results: list[dict], pathology: str,
                       target_dx: str | None, max_steps: int) -> pd.DataFrame:
     """Extract per-patient per-step metrics into a DataFrame."""
     rows = []
     for patient in results:
         hadm_id = patient["hadm_id"]
+        first_confident_step = patient.get("first_confident_step")
         for step in patient["steps"]:
             step_num = step["step"]
             if step_num > max_steps:
                 break
-            parsed = step.get("parsed", {})
-            diff = parsed.get("differential", [])
+            # Exclude post-confidence buffer steps (kept in JSON for case-by-case review)
+            if first_confident_step is not None and step_num > first_confident_step:
+                break
+            parsed = step.get("parsed") or {}
+            diff = parsed.get("differential") or []
 
             top1_dx = diff[0]["diagnosis"] if len(diff) > 0 else ""
             top1_conf = diff[0]["confidence"] if len(diff) > 0 else 0.0
@@ -79,6 +92,14 @@ def extract_step_data(results: list[dict], pathology: str,
                 for d in diff
             ) if diff else False
 
+            # Confidence distribution entropy
+            confs = [d["confidence"] for d in diff] if diff else []
+            step_entropy = entropy(confs) if confs else None
+
+            # New schema fields
+            delta = parsed.get("delta")
+            confident = parsed.get("confident_in_diagnosis")
+
             rows.append({
                 "hadm_id": hadm_id,
                 "step": step_num,
@@ -92,6 +113,10 @@ def extract_step_data(results: list[dict], pathology: str,
                 "top3_gracious": top3_gracious,
                 "high_conf_correct": high_conf,
                 "ddx_size": len(diff),
+                "entropy": step_entropy,
+                "delta": delta,
+                "confident_in_diagnosis": confident,
+                "first_confident_step": first_confident_step,
                 "input_tokens": step.get("input_tokens", 0),
                 "output_tokens": step.get("output_tokens", 0),
                 "latency_ms": step.get("latency_ms", 0),
@@ -120,6 +145,10 @@ def compute_accuracy_series(df: pd.DataFrame, max_steps: int) -> pd.DataFrame:
         ever_top1 = up_to.groupby("hadm_id")["top1_correct"].any().mean()
         ever_high_conf = up_to.groupby("hadm_id")["high_conf_correct"].any().mean()
 
+        # Entropy and confidence signal
+        mean_entropy = step_df["entropy"].mean() if step_df["entropy"].notna().any() else None
+        pct_confident = step_df["confident_in_diagnosis"].mean() if step_df["confident_in_diagnosis"].notna().any() else None
+
         records.append({
             "step": step_num,
             "top1_accuracy": top1_acc,
@@ -128,6 +157,8 @@ def compute_accuracy_series(df: pd.DataFrame, max_steps: int) -> pd.DataFrame:
             "top3_gracious": top3_gracious_acc,
             "ever_top1": ever_top1,
             "ever_high_conf": ever_high_conf,
+            "mean_entropy": mean_entropy,
+            "pct_confident": pct_confident,
             "active_patients": active,
         })
     return pd.DataFrame(records)
@@ -264,6 +295,215 @@ def plot_confidence_trajectories(all_step_data: dict[str, pd.DataFrame],
     plt.close(fig)
 
 
+def plot_entropy_and_confidence(all_acc: dict[str, pd.DataFrame], all_counts: dict[str, int],
+                                model_name: str, output_path: Path, max_steps: int):
+    """Plot entropy and confidence signal over steps, with active patient count and top-1 accuracy."""
+    n = len(all_acc)
+    cols = min(2, n)
+    rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(7 * cols, 5 * rows), squeeze=False)
+    fig.suptitle(f"Diagnostic certainty over replay steps — {model_name}", fontsize=13, y=0.98)
+
+    for idx, (pathology, acc) in enumerate(all_acc.items()):
+        ax = axes[idx // cols][idx % cols]
+        n_patients = all_counts[pathology]
+
+        # Active patients as background bars
+        ax2 = ax.twinx()
+        ax2.bar(acc["step"], acc["active_patients"], alpha=0.10, color="gray", zorder=0)
+        ax2.set_ylabel("patients active", fontsize=9, color="gray")
+        ax2.tick_params(axis="y", labelcolor="gray", labelsize=8)
+
+        # Entropy on left axis
+        if acc["mean_entropy"].notna().any():
+            ax.plot(acc["step"], acc["mean_entropy"], "o-", color="C0", ms=4, label="mean entropy (bits)")
+        ax.set_ylabel("entropy (bits) / fraction", fontsize=9)
+        ax.set_ylim(bottom=0)
+
+        # % confident
+        if acc["pct_confident"].notna().any():
+            ax.plot(acc["step"], acc["pct_confident"], "s-", color="C3", ms=4, label="% confident")
+            ax.fill_between(acc["step"], 0, acc["pct_confident"], alpha=0.1, color="C3")
+
+        # Top-1 accuracy overlay
+        ax.plot(acc["step"], acc["top1_accuracy"], "^--", color="C2", ms=4, alpha=0.7, label="top-1 accuracy")
+
+        label = pathology.replace("_", " ")
+        ax.set_title(f"{label} (n={n_patients})", fontsize=10)
+        ax.set_xlabel("replay step", fontsize=9)
+        ax.set_xlim(0.5, max_steps + 0.5)
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, loc="upper right")
+
+    for idx in range(n, rows * cols):
+        axes[idx // cols][idx % cols].set_visible(False)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    print(f"Saved {output_path}")
+    plt.close(fig)
+
+
+
+def classify_termination(patient: dict, max_steps: int) -> str:
+    """Classify why a patient's replay ended."""
+    fc = patient.get("first_confident_step")
+    steps = patient.get("steps", [])
+    if not steps:
+        return "no_steps"
+    last_step = steps[-1]
+    last_step_num = last_step["step"]
+
+    if fc is not None:
+        return "confident"
+    if last_step_num >= max_steps:
+        return "max_steps"
+    # Check for surgery stop (Service: SURG in last step's prompt)
+    if "Service: SURG" in last_step.get("prompt", ""):
+        return "surgery"
+    return "timeline_end"
+
+
+def compute_termination_accuracy(results: list[dict], pathology: str,
+                                 max_steps: int) -> pd.DataFrame:
+    """Compute accuracy at termination step, grouped by termination reason."""
+    rows = []
+    for patient in results:
+        reason = classify_termination(patient, max_steps)
+        fc = patient.get("first_confident_step")
+        steps = patient.get("steps", [])
+
+        # Pick the termination step to evaluate
+        if reason == "confident" and fc is not None:
+            # Evaluate at the confidence step
+            eval_steps = [s for s in steps if s["step"] == fc]
+        else:
+            # Evaluate at the last step
+            eval_steps = [steps[-1]] if steps else []
+
+        if not eval_steps:
+            continue
+
+        step = eval_steps[0]
+        parsed = step.get("parsed") or {}
+        diff = parsed.get("differential") or []
+        top1_dx = diff[0]["diagnosis"] if diff else ""
+
+        rows.append({
+            "hadm_id": patient["hadm_id"],
+            "reason": reason,
+            "eval_step": step["step"],
+            "top1_dx": top1_dx,
+            "top1_correct": MATCHER.is_correct(top1_dx, pathology) if top1_dx else False,
+            "top1_gracious": (
+                MATCHER.is_correct(top1_dx, pathology) or MATCHER.is_gracious(top1_dx, pathology)
+            ) if top1_dx else False,
+            "top3_correct": any(
+                MATCHER.is_correct(d["diagnosis"], pathology) for d in diff[:3]
+            ) if diff else False,
+        })
+    return pd.DataFrame(rows)
+
+
+def plot_termination_accuracy(all_term: dict[str, pd.DataFrame], all_counts: dict[str, int],
+                              model_name: str, output_path: Path):
+    """Grouped bar chart: accuracy at termination by reason, per pathology."""
+    reason_order = ["confident", "surgery", "timeline_end", "max_steps"]
+    reason_labels = {
+        "confident": "confident",
+        "surgery": "surgery stop",
+        "timeline_end": "timeline end",
+        "max_steps": "max steps",
+    }
+    reason_colors = {
+        "confident": "#2ecc71",
+        "surgery": "#3498db",
+        "timeline_end": "#95a5a6",
+        "max_steps": "#e74c3c",
+    }
+
+    pathologies = list(all_term.keys())
+    n_path = len(pathologies)
+
+    fig, ax = plt.subplots(figsize=(max(10, n_path * 1.8), 6))
+    fig.suptitle(f"Top-1 accuracy at termination — {model_name}", fontsize=13)
+
+    bar_width = 0.18
+    x = np.arange(n_path)
+
+    for i, reason in enumerate(reason_order):
+        accs = []
+        counts = []
+        for pathology in pathologies:
+            df = all_term[pathology]
+            subset = df[df["reason"] == reason]
+            if len(subset) > 0:
+                accs.append(subset["top1_correct"].mean())
+                counts.append(len(subset))
+            else:
+                accs.append(0)
+                counts.append(0)
+
+        offset = (i - len(reason_order) / 2 + 0.5) * bar_width
+        bars = ax.bar(x + offset, accs, bar_width,
+                      label=reason_labels[reason], color=reason_colors[reason],
+                      edgecolor="white", linewidth=0.5)
+
+        # Count labels on bars
+        for j, (bar, count) in enumerate(zip(bars, counts)):
+            if count > 0:
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
+                        str(count), ha="center", va="bottom", fontsize=7, color="gray")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([p.replace("_", " ") for p in pathologies], fontsize=9)
+    ax.set_ylabel("top-1 accuracy", fontsize=10)
+    ax.set_ylim(0, 1.15)
+    ax.grid(alpha=0.3, axis="y")
+    ax.legend(fontsize=9, title="termination reason")
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    print(f"Saved {output_path}")
+    plt.close(fig)
+
+
+def print_termination_table(all_term: dict[str, pd.DataFrame]):
+    """Print a summary table of accuracy by termination reason."""
+    reason_order = ["confident", "surgery", "timeline_end", "max_steps"]
+
+    header = "{:28s} {:>12s} {:>12s} {:>12s} {:>12s}".format(
+        "", "confident", "surgery", "timeline end", "max steps")
+    print("\n" + header)
+    print("-" * len(header))
+
+    for pathology, df in all_term.items():
+        parts = []
+        for reason in reason_order:
+            subset = df[df["reason"] == reason]
+            if len(subset) > 0:
+                acc = subset["top1_correct"].mean()
+                parts.append("{:.0%} ({})".format(acc, len(subset)))
+            else:
+                parts.append("—")
+        name = pathology.replace("_", " ")
+        print("{:28s} {:>12s} {:>12s} {:>12s} {:>12s}".format(name, *parts))
+
+    # Overall row
+    all_df = pd.concat(all_term.values())
+    parts = []
+    for reason in reason_order:
+        subset = all_df[all_df["reason"] == reason]
+        if len(subset) > 0:
+            acc = subset["top1_correct"].mean()
+            parts.append("{:.0%} ({})".format(acc, len(subset)))
+        else:
+            parts.append("—")
+    print("-" * len(header))
+    print("{:28s} {:>12s} {:>12s} {:>12s} {:>12s}".format("OVERALL", *parts))
+    print()
+
+
 def save_excel(all_step_data: dict[str, pd.DataFrame], output_path: Path):
     """Save per-step summary to Excel, one sheet per pathology."""
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
@@ -272,7 +512,8 @@ def save_excel(all_step_data: dict[str, pd.DataFrame], output_path: Path):
             summary = df.pivot_table(
                 index="hadm_id",
                 columns="step",
-                values=["top1_dx", "top1_conf", "top1_correct", "assessment"],
+                values=["top1_dx", "top1_conf", "top1_correct", "delta",
+                        "confident_in_diagnosis", "entropy", "assessment"],
                 aggfunc="first",
             )
             # Flatten column names
@@ -318,6 +559,7 @@ def main():
     all_step_data = {}
     all_acc = {}
     all_counts = {}
+    all_raw = {}
 
     for rdir, pathology, tdx in zip(args.result_dirs, args.pathology, target_dxs):
         rdir = Path(rdir)
@@ -333,6 +575,7 @@ def main():
         all_step_data[pathology] = df
         all_acc[pathology] = acc
         all_counts[pathology] = len(results)
+        all_raw[pathology] = results
 
         print(f"  {len(results)} patients, {len(df)} step records")
 
@@ -344,6 +587,15 @@ def main():
                   args.max_steps)
     plot_confidence_trajectories(all_step_data, all_counts, model_name,
                                 out_dir / "confidence_trajectories_all.png", args.max_steps)
+    plot_entropy_and_confidence(all_acc, all_counts, model_name,
+                               out_dir / "entropy_and_confidence.png", args.max_steps)
+    # Termination accuracy
+    all_term = {}
+    for pathology, results in all_raw.items():
+        all_term[pathology] = compute_termination_accuracy(results, pathology, args.max_steps)
+    plot_termination_accuracy(all_term, all_counts, model_name,
+                              out_dir / "termination_accuracy.png")
+    print_termination_table(all_term)
 
     # Excel
     if not args.no_excel:

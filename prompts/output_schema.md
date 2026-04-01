@@ -21,20 +21,15 @@ Respond with a **single JSON object** and nothing else. No text before or after 
 
 ### Field specifications
 
-**assessment** (required): 1-3 sentences of clinical reasoning. What is the clinical picture so far? What changed with the new information?
+**assessment** (required): 1-3 sentences summarizing the overall clinical picture so far.
 
-**delta** (required): How did the new information change your assessment compared to the previous step? Exactly one of:
-- `"new_hypothesis"` — a new diagnosis entered your differential that was not there before (use this for step 1)
-- `"strengthened"` — evidence strengthened your confidence in the leading diagnosis
-- `"weakened"` — evidence weakened your confidence in the leading diagnosis
-- `"revised"` — the leading diagnosis changed (a different diagnosis is now #1)
-- `"unchanged"` — the new information did not meaningfully change your assessment
+**delta** (required): 1-2 sentences reflecting on what the new events in this step revealed and how they changed (or did not change) your diagnostic thinking compared to the previous step. For step 1, describe your initial impression.
 
 **differential** (required): Exactly 5 diagnoses ranked by likelihood. The first entry is your working diagnosis. You must always provide exactly 5 entries.
 - `diagnosis`: standard medical terminology (e.g. "Pulmonary embolism", "Right lower lobe pneumonia")
 - `confidence`: 0.0 to 1.0. All five confidences must sum to exactly 1.0.
 
-**key_findings** (required): The 1-5 most diagnostically important event indices from ALL events seen so far. Reference events by their `[N]` index number. Include findings from any step, not just the current one. You may drop previously listed findings if they are no longer among the most important.
+**key_findings** (required): 0-5 event indices from this step's new events that are diagnostically relevant to your current assessment. Reference events by their `[N]` index number. Only include events from the current step, not previous steps. An empty list is acceptable if no new events are diagnostically significant.
 
 **actions** (required): 0-3 recommended next clinical actions. If your recommendation is to wait and observe without a specific intervention, leave this array empty.
 - `action`: one of the action keys below
@@ -58,7 +53,7 @@ Respond with a **single JSON object** and nothing else. No text before or after 
 ```json
 {
   "assessment": "CTPA shows a saddle embolus extending into bilateral pulmonary arteries. Combined with the elevated D-dimer, tachycardia, and pleuritic chest pain, this confirms acute PE.",
-  "delta": "strengthened",
+  "delta": "CTPA confirms a saddle embolus, which combined with the elevated D-dimer and tachycardia solidifies acute PE as the leading diagnosis.",
   "differential": [
     {"diagnosis": "Acute pulmonary embolism", "confidence": 0.88},
     {"diagnosis": "Acute coronary syndrome", "confidence": 0.05},
@@ -66,7 +61,7 @@ Respond with a **single JSON object** and nothing else. No text before or after 
     {"diagnosis": "Aortic dissection", "confidence": 0.02},
     {"diagnosis": "Pericarditis", "confidence": 0.02}
   ],
-  "key_findings": [3, 11, 19],
+  "key_findings": [19],
   "actions": [
     {"action": "administer_medication", "detail": "heparin IV bolus"},
     {"action": "order_labs", "detail": "troponin, BNP, ABG"}

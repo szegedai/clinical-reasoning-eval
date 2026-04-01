@@ -93,15 +93,12 @@ def parse_and_validate(text: str) -> ParsedResponse:
     key_findings = raw.get("key_findings")
     if isinstance(key_findings, list):
         key_findings = [x for x in key_findings if isinstance(x, int)]
-        if not key_findings:
-            key_findings = None
     else:
         key_findings = None
 
     delta = raw.get("delta")
-    valid_deltas = {"new_hypothesis", "strengthened", "weakened", "revised", "unchanged"}
-    if not isinstance(delta, str) or delta not in valid_deltas:
-        errors.append(f"invalid or missing 'delta' (got {delta!r})")
+    if not isinstance(delta, str) or not delta.strip():
+        errors.append(f"missing or empty 'delta' (got {delta!r})")
         delta = None
 
     actions = raw.get("actions")
