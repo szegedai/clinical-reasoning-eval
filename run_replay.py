@@ -46,6 +46,8 @@ def build_runner(cfg: dict) -> PatientRunner:
     renderer = PromptRenderer(
         system_prompt=prompts_cfg.get("system", "system_prompt.md"),
         step_prompt=prompts_cfg.get("step", "step_prompt.md"),
+        step_prompt_cumulative=prompts_cfg.get("step_cumulative", "step_prompt_cumulative.md"),
+        onepass_prompt=prompts_cfg.get("onepass", "onepass_prompt.md"),
     )
 
     chunker_kwargs = {}
@@ -74,6 +76,7 @@ def build_runner(cfg: dict) -> PatientRunner:
         max_retries=cfg.get("max_retries", 3),
         max_steps=cfg.get("max_steps"),
         stop_after_confidence=cfg.get("stop_after_confidence"),
+        mode=cfg.get("mode", "conversational"),
     )
 
 
@@ -84,13 +87,32 @@ def main():
     parser.add_argument("--output", "-o", type=str, required=True, help="Output directory for results")
     parser.add_argument("--skip-existing", action="store_true", help="Skip patients with existing result files")
     parser.add_argument("--limit", type=int, default=None, help="Max number of patients to process")
+    parser.add_argument("--reference-dir", type=str, default=None,
+                        help="Reference results dir (required for onepass mode)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    mode = cfg.get("mode", "conversational")
     timeline_dir = Path(args.timeline_dir)
+    reference_dir = Path(args.reference_dir) if args.reference_dir else None
+
+    if mode == "onepass" and reference_dir is None:
+        print("Error: --reference-dir is required for onepass mode", file=sys.stderr)
+        sys.exit(1)
+
     timeline_files = sorted(timeline_dir.glob("timeline_*.csv"))
     if args.limit:
         timeline_files = timeline_files[:args.limit]
+
+    # For onepass, only process patients that have a reference result
+    if mode == "onepass" and reference_dir is not None:
+        filtered = []
+        for tf in timeline_files:
+            hadm_id = tf.stem.replace("timeline_", "")
+            ref_file = reference_dir / f"patient_{hadm_id}.json"
+            if ref_file.exists():
+                filtered.append(tf)
+        timeline_files = filtered
 
     if not timeline_files:
         print(f"No timeline_*.csv files found in {timeline_dir}", file=sys.stderr)
@@ -106,12 +128,13 @@ def main():
         **cfg,
         "n_patients": len(timeline_files),
         "timeline_dir": str(timeline_dir),
+        "reference_dir": str(reference_dir) if reference_dir else None,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
     (out_dir / "run_config.json").write_text(json.dumps(run_config, indent=2))
 
     print(f"Batch run: {len(timeline_files)} patients → {out_dir}")
-    print(f"Model: {cfg['model']} | Temperature: {cfg.get('temperature', 0.0)}")
+    print(f"Model: {cfg['model']} | Mode: {mode} | Temperature: {cfg.get('temperature', 0.0)}")
     print()
 
     failures = []
@@ -127,7 +150,11 @@ def main():
             continue
 
         try:
-            result = runner.run(tf)
+            if mode == "onepass":
+                ref_file = reference_dir / f"patient_{hadm_id}.json"
+                result = runner.run_onepass(tf, ref_file)
+            else:
+                result = runner.run(tf)
             out_file.write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
 
             status = f"{len(result.steps)} steps, {result.total_input_tokens}+{result.total_output_tokens} tokens"

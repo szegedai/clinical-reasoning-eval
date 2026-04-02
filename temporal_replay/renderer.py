@@ -43,14 +43,21 @@ class PromptRenderer:
         self,
         *,
         system_prompt: str = "system_prompt.md",
+        system_prompt_onepass: str = "system_prompt_onepass.md",
         step_prompt: str = "step_prompt.md",
+        step_prompt_cumulative: str = "step_prompt_cumulative.md",
+        onepass_prompt: str = "onepass_prompt.md",
         output_schema: str = "output_schema.md",
         prompts_dir: str | Path | None = None,
     ):
         self._dir = Path(prompts_dir) if prompts_dir else _PROMPTS_DIR
         self._system_prompt = system_prompt
+        self._system_prompt_onepass = system_prompt_onepass
         self._step_prompt = step_prompt
+        self._step_prompt_cumulative = step_prompt_cumulative
+        self._onepass_prompt = onepass_prompt
         self._output_schema = output_schema
+        self._output_schema_onepass = output_schema.replace(".md", "_onepass.md")
         self._cache: dict[str, str] = {}
         self._formatter = PromptFormatter()
 
@@ -59,9 +66,11 @@ class PromptRenderer:
             self._cache[name] = (self._dir / name).read_text()
         return self._cache[name]
 
-    def render_system(self) -> str:
-        template = self._read(self._system_prompt)
-        schema = self._read(self._output_schema)
+    def render_system(self, *, onepass: bool = False) -> str:
+        name = self._system_prompt_onepass if onepass else self._system_prompt
+        template = self._read(name)
+        schema_name = self._output_schema_onepass if onepass else self._output_schema
+        schema = self._read(schema_name)
         return _fill(template, {"output_schema": schema})
 
     def render_step(
@@ -94,4 +103,43 @@ class PromptRenderer:
             "n_new_events": str(len(events)),
             "formatted_events": "\n".join(numbered),
             "last_event_index": str(last_event_index),
+        })
+
+    def render_step_cumulative(
+        self,
+        chunk,  # ReplayChunk
+        global_index: int,
+    ) -> str:
+        """Render a step prompt with ALL cumulative events (for progressive mode)."""
+        template = self._read(self._step_prompt_cumulative)
+        cumulative = chunk.cumulative
+        all_numbered = self._formatter.format_events_numbered(cumulative, start_index=0)
+
+        new_start_index = global_index
+        last_event_index = global_index + len(chunk.events) - 1
+        t_end = cumulative["elapsed_hours"].max()
+
+        return _fill(template, {
+            "step": str(chunk.step),
+            "label": chunk.label,
+            "elapsed_hours_end": f"{t_end:.1f}" if pd.notna(t_end) else "?",
+            "n_total_events": str(len(cumulative)),
+            "n_new_events": str(len(chunk.events)),
+            "new_start_index": str(new_start_index),
+            "last_event_index": str(last_event_index),
+            "formatted_events": "\n".join(all_numbered),
+        })
+
+    def render_onepass(self, chunk) -> str:
+        """Render a single prompt with all events (for onepass mode)."""
+        template = self._read(self._onepass_prompt)
+        cumulative = chunk.cumulative
+        all_numbered = self._formatter.format_events_numbered(cumulative, start_index=0)
+
+        t_end = cumulative["elapsed_hours"].max()
+
+        return _fill(template, {
+            "elapsed_hours_end": f"{t_end:.1f}" if pd.notna(t_end) else "?",
+            "n_total_events": str(len(cumulative)),
+            "formatted_events": "\n".join(all_numbered),
         })
