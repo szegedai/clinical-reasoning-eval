@@ -48,6 +48,8 @@ def build_runner(cfg: dict) -> PatientRunner:
         step_prompt=prompts_cfg.get("step", "step_prompt.md"),
         step_prompt_cumulative=prompts_cfg.get("step_cumulative", "step_prompt_cumulative.md"),
         onepass_prompt=prompts_cfg.get("onepass", "onepass_prompt.md"),
+        step_prompt_compressed=prompts_cfg.get("step_compressed", "step_prompt_compressed.md"),
+        step_prompt_compressed_initial=prompts_cfg.get("step_compressed_initial", "step_prompt_compressed_initial.md"),
     )
 
     chunker_kwargs = {}

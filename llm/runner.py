@@ -89,7 +89,7 @@ class PatientResult:
 class PatientRunner:
     """Run a full temporal replay for one patient."""
 
-    VALID_MODES = ("conversational", "progressive", "onepass")
+    VALID_MODES = ("conversational", "progressive", "onepass", "compressed")
 
     def __init__(
         self,
@@ -153,7 +153,7 @@ class PatientRunner:
             str(folder), filename, **self.chunker_kwargs
         )
 
-        system_prompt = self.renderer.render_system()
+        system_prompt = self.renderer.render_system(compressed=self.mode == "compressed")
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         steps: list[StepResult] = []
@@ -162,6 +162,7 @@ class PatientRunner:
         global_index = 0
         steps_since_confidence: int | None = None  # None = not yet confident
         first_confident_step: int | None = None
+        prev_parsed: ParsedResponse | None = None  # for compressed mode
 
         for chunk in chunker.replay():
             # Hard cap: stop after max_steps
@@ -182,6 +183,15 @@ class PatientRunner:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": step_prompt},
                 ]
+            elif self.mode == "compressed":
+                step_prompt = self.renderer.render_step_compressed(
+                    chunk, global_index=global_index,
+                    prev_parsed=prev_parsed,
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": step_prompt},
+                ]
             else:
                 step_prompt = self.renderer.render_step(
                     chunk, global_index=global_index,
@@ -193,8 +203,11 @@ class PatientRunner:
             )
             parsed = parse_and_validate(raw_response)
 
-            if self.mode != "progressive":
+            if self.mode not in ("progressive", "compressed"):
                 messages.append({"role": "assistant", "content": raw_response})
+
+            if self.mode == "compressed":
+                prev_parsed = parsed
 
             total_input += input_tokens
             total_output += output_tokens

@@ -47,6 +47,8 @@ class PromptRenderer:
         step_prompt: str = "step_prompt.md",
         step_prompt_cumulative: str = "step_prompt_cumulative.md",
         onepass_prompt: str = "onepass_prompt.md",
+        step_prompt_compressed: str = "step_prompt_compressed.md",
+        step_prompt_compressed_initial: str = "step_prompt_compressed_initial.md",
         output_schema: str = "output_schema.md",
         prompts_dir: str | Path | None = None,
     ):
@@ -56,8 +58,11 @@ class PromptRenderer:
         self._step_prompt = step_prompt
         self._step_prompt_cumulative = step_prompt_cumulative
         self._onepass_prompt = onepass_prompt
+        self._step_prompt_compressed = step_prompt_compressed
+        self._step_prompt_compressed_initial = step_prompt_compressed_initial
         self._output_schema = output_schema
         self._output_schema_onepass = output_schema.replace(".md", "_onepass.md")
+        self._output_schema_compressed = output_schema.replace(".md", "_compressed.md")
         self._cache: dict[str, str] = {}
         self._formatter = PromptFormatter()
 
@@ -66,10 +71,15 @@ class PromptRenderer:
             self._cache[name] = (self._dir / name).read_text()
         return self._cache[name]
 
-    def render_system(self, *, onepass: bool = False) -> str:
+    def render_system(self, *, onepass: bool = False, compressed: bool = False) -> str:
         name = self._system_prompt_onepass if onepass else self._system_prompt
         template = self._read(name)
-        schema_name = self._output_schema_onepass if onepass else self._output_schema
+        if onepass:
+            schema_name = self._output_schema_onepass
+        elif compressed:
+            schema_name = self._output_schema_compressed
+        else:
+            schema_name = self._output_schema
         schema = self._read(schema_name)
         return _fill(template, {"output_schema": schema})
 
@@ -128,6 +138,48 @@ class PromptRenderer:
             "new_start_index": str(new_start_index),
             "last_event_index": str(last_event_index),
             "formatted_events": "\n".join(all_numbered),
+        })
+
+    def render_step_compressed(
+        self,
+        chunk,  # ReplayChunk
+        global_index: int,
+        prev_parsed=None,  # ParsedResponse | None
+    ) -> str:
+        """Render a step prompt with compressed prior reasoning + new events.
+
+        For step 1 (prev_parsed is None), uses the initial template (same as
+        conversational mode). For subsequent steps, includes a structured summary
+        of the previous assessment plus only the new events.
+        """
+        events = chunk.events
+        numbered = self._formatter.format_events_numbered(events, start_index=global_index)
+        last_event_index = global_index + len(events) - 1
+
+        t_start = events["elapsed_hours"].min()
+        t_end = events["elapsed_hours"].max()
+
+        base = {
+            "step": str(chunk.step),
+            "label": chunk.label,
+            "elapsed_hours_start": f"{t_start:.1f}" if pd.notna(t_start) else "?",
+            "elapsed_hours_end": f"{t_end:.1f}" if pd.notna(t_end) else "?",
+            "n_new_events": str(len(events)),
+            "formatted_events": "\n".join(numbered),
+        }
+
+        if prev_parsed is None or prev_parsed.assessment is None:
+            template = self._read(self._step_prompt_compressed_initial)
+            return _fill(template, base)
+
+        template = self._read(self._step_prompt_compressed)
+        return _fill(template, {
+            **base,
+            "total_events_so_far": str(global_index + len(events)),
+            "first_event_index": str(global_index),
+            "last_event_index": str(last_event_index),
+            "prev_step": str(chunk.step - 1),
+            "prev_assessment": prev_parsed.assessment,
         })
 
     def render_onepass(self, chunk) -> str:
