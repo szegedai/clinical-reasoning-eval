@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -88,6 +89,8 @@ class PatientResult:
 class PatientRunner:
     """Run a full temporal replay for one patient."""
 
+    VALID_MODES = ("conversational", "progressive", "onepass", "compressed")
+
     def __init__(
         self,
         client: openai.OpenAI,
@@ -99,7 +102,10 @@ class PatientRunner:
         temperature: float = 0.0,
         max_steps: int | None = None,
         stop_after_confidence: int | None = None,
+        mode: str = "conversational",
     ):
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"Unknown mode: {mode!r}. Must be one of {self.VALID_MODES}")
         self.client = client
         self.model = model
         self.renderer = renderer
@@ -108,6 +114,7 @@ class PatientRunner:
         self.temperature = temperature
         self.max_steps = max_steps
         self.stop_after_confidence = stop_after_confidence
+        self.mode = mode
 
     def _call_llm(self, messages: list[dict]) -> tuple[str, int, int, float]:
         """Call LLM with retries."""
@@ -137,7 +144,7 @@ class PatientRunner:
         raise last_error  # type: ignore[misc]
 
     def run(self, timeline_path: Path) -> PatientResult:
-        """Run full replay for one patient."""
+        """Run full replay for one patient (conversational or progressive mode)."""
         started_at = datetime.now(timezone.utc).isoformat()
         folder = timeline_path.parent
         filename = timeline_path.name
@@ -146,7 +153,7 @@ class PatientRunner:
             str(folder), filename, **self.chunker_kwargs
         )
 
-        system_prompt = self.renderer.render_system()
+        system_prompt = self.renderer.render_system(compressed=self.mode == "compressed")
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         steps: list[StepResult] = []
@@ -155,6 +162,7 @@ class PatientRunner:
         global_index = 0
         steps_since_confidence: int | None = None  # None = not yet confident
         first_confident_step: int | None = None
+        prev_parsed: ParsedResponse | None = None  # for compressed mode
 
         for chunk in chunker.replay():
             # Hard cap: stop after max_steps
@@ -167,17 +175,39 @@ class PatientRunner:
                     and steps_since_confidence > self.stop_after_confidence):
                 break
 
-            step_prompt = self.renderer.render_step(
-                chunk, global_index=global_index,
-            )
-            messages.append({"role": "user", "content": step_prompt})
+            if self.mode == "progressive":
+                step_prompt = self.renderer.render_step_cumulative(
+                    chunk, global_index=global_index,
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": step_prompt},
+                ]
+            elif self.mode == "compressed":
+                step_prompt = self.renderer.render_step_compressed(
+                    chunk, global_index=global_index,
+                    prev_parsed=prev_parsed,
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": step_prompt},
+                ]
+            else:
+                step_prompt = self.renderer.render_step(
+                    chunk, global_index=global_index,
+                )
+                messages.append({"role": "user", "content": step_prompt})
 
             raw_response, input_tokens, output_tokens, latency_ms = self._call_llm(
                 messages
             )
             parsed = parse_and_validate(raw_response)
 
-            messages.append({"role": "assistant", "content": raw_response})
+            if self.mode not in ("progressive", "compressed"):
+                messages.append({"role": "assistant", "content": raw_response})
+
+            if self.mode == "compressed":
+                prev_parsed = parsed
 
             total_input += input_tokens
             total_output += output_tokens
@@ -217,4 +247,84 @@ class PatientRunner:
             total_input_tokens=total_input,
             total_output_tokens=total_output,
             first_confident_step=first_confident_step,
+        )
+
+    def run_onepass(self, timeline_path: Path, reference_result_path: Path) -> PatientResult:
+        """Run a single-shot evaluation using the same events a reference run saw.
+
+        Parameters
+        ----------
+        timeline_path : Path
+            Path to the timeline CSV.
+        reference_result_path : Path
+            Path to a patient_*.json from a previous run. The termination step
+            from that run determines how much of the timeline to include.
+        """
+        started_at = datetime.now(timezone.utc).isoformat()
+        folder = timeline_path.parent
+        filename = timeline_path.name
+
+        # Load reference to find termination step
+        with open(reference_result_path) as f:
+            ref = json.load(f)
+        ref_confident = ref.get("first_confident_step")
+        ref_steps = ref.get("steps", [])
+        if ref_confident is not None:
+            target_step = ref_confident
+        elif ref_steps:
+            target_step = ref_steps[-1]["step"]
+        else:
+            raise ValueError(f"Reference result has no steps: {reference_result_path}")
+
+        chunker = TimelineChunker(
+            str(folder), filename, **self.chunker_kwargs
+        )
+
+        system_prompt = self.renderer.render_system(onepass=True)
+
+        # Iterate chunks up to the target step
+        last_chunk = None
+        global_index = 0
+        for chunk in chunker.replay():
+            last_chunk = chunk
+            global_index += len(chunk.events)
+            if chunk.step >= target_step:
+                break
+
+        if last_chunk is None:
+            raise ValueError(f"No chunks produced for {timeline_path}")
+
+        step_prompt = self.renderer.render_onepass(last_chunk)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": step_prompt},
+        ]
+
+        raw_response, input_tokens, output_tokens, latency_ms = self._call_llm(messages)
+        parsed = parse_and_validate(raw_response)
+
+        finished_at = datetime.now(timezone.utc).isoformat()
+
+        return PatientResult(
+            hadm_id=chunker.hadm_id,
+            subject_id=chunker.subject_id,
+            model=self.model,
+            total_events=chunker.total_events,
+            steps=[StepResult(
+                step=last_chunk.step,
+                label="onepass",
+                n_events=len(last_chunk.cumulative),
+                prompt=step_prompt,
+                raw_response=raw_response,
+                parsed=parsed,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+            )],
+            system_prompt=system_prompt,
+            started_at=started_at,
+            finished_at=finished_at,
+            total_input_tokens=input_tokens,
+            total_output_tokens=output_tokens,
+            first_confident_step=None,
         )
