@@ -3,6 +3,13 @@
 *.txt
 *timelines*/
 
+# Paper
+paper/
+
+# Narrative/rewrite experiments (not part of the paper)
+bias_resilience/rewrites/
+bias_resilience/conditions/narrative.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
