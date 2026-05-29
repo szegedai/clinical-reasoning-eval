@@ -47,6 +47,20 @@ analysis/                 # Result analysis and visualization
 
 run_replay.py             # CLI: run replay on a batch of patients
 utils/check_bq_usage.py   # BigQuery cost monitoring
+
+bias_resilience/          # Bias-resilience experiment framework
+  config.py               #   model configs, condition registry, paths
+  cli.py                  #   CLI entrypoint (python -m bias_resilience.cli)
+  runner.py               #   per-patient orchestration, output JSON
+  replay.py               #   core temporal replay loop with injection hooks
+  schema.py               #   LLM response parsing and validation
+  anchors.py              #   anchor resolution (post_pe, post_first_labs, post_imaging)
+  demote.py               #   runner-up wrong-dx extraction from baseline
+  dx_dedup.py             #   compound diagnosis deduplication
+  cohort.py               #   cohort manifest loading and filtering
+  conditions/             #   bias injection conditions (baseline, struc_belief, struc_consult, pushback)
+  prompts/                #   step prompt templates
+  tests/                  #   unit tests (no LLM calls)
 ```
 
 ## Usage
@@ -111,8 +125,37 @@ python analysis/analyze_results.py results/appendicitis_gemini results/cholecyst
 python analysis/collect_results.py results/run1/
 ```
 
+### 4. Bias-resilience experiments
+
+```bash
+# Baseline run on a cohort
+python -m bias_resilience.cli \
+  --run-id baseline_appendicitis \
+  --model gemini-2.5-flash \
+  --condition baseline \
+  --pathology appendicitis \
+  --cohort-file path/to/cohort.txt \
+  --max-hours 48
+
+# Structured belief injection
+python -m bias_resilience.cli \
+  --run-id struc_belief_appendicitis \
+  --model gemini-2.5-flash \
+  --condition struc_belief \
+  --pathology appendicitis \
+  --cohort-file path/to/cohort.txt \
+  --anchor post_imaging \
+  --max-hours 48
+```
+
+Set `LOCAL_LLM_BASE_URL` and `LOCAL_LLM_MODEL_ID` in your `.env` to use a local model (Ollama, vLLM, etc.) with `--model local`.
+
 ## How the replay works
 
 Each patient timeline is split into clinical steps (arrival → triage → exam → labs/imaging → ...). At each step, new events are presented to the LLM as a user message in a multi-turn conversation. The LLM responds with a JSON containing its current assessment, differential diagnosis with confidence scores, key findings, and recommended actions.
 
 The `openai` SDK with `base_url` is used for all providers (OpenAI, Gemini, local models via vLLM/Ollama).
+
+---
+
+Parts of this codebase were developed with the assistance of an AI coding tool. Disclosed in accordance with ACL policies.
