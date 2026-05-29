@@ -34,7 +34,6 @@ acute_pancreatitis:
     - "(?i)pancreatitis"
     - "(?i)pancreatic.*(necrosis|necrotizing)"
   dx_gracious:
-    - "(?i)gallstone pancreatitis"
     - "(?i)pancreatic.*(pseudocyst|fluid collection)"
   timeline_dir: acute_pancreatitis
 
@@ -80,10 +79,8 @@ cholecystitis:
     - "(?i)gallbladder.*(gangren|infect|inflam|abscess|necros|perforat)"
     - "(?i)(gangren|perforat).*gallbladder"
     - "(?i)biliary colic"
-    - "(?i)choledocholithiasis"
   dx_gracious:
     - "(?i)acute.*(gallbladder|biliary).*(disease|attack|colic)"
-    - "(?i)cholangitis"
   timeline_dir: cholecystitis
 
 cholelithiasis:
@@ -113,11 +110,8 @@ diverticulitis:
     - "(?i)diverticulitis"
     - "(?i)perforat.*(diverticul|sigmoid)"
   dx_gracious:
-    - "(?i)sigmoid.*(colitis|perforat|abscess)"
-    - "(?i)(colonic|colon).*(perforat|abscess)"
+    - "(?i)sigmoid.*(perforat|abscess)"
     - "(?i)pericolic abscess"
-    - "(?i)perforat.*(viscus|bowel)"
-    - "(?i)peritonitis"
   timeline_dir: diverticulitis
 
 infective_endocarditis:
